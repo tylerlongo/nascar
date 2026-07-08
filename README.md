@@ -1,11 +1,152 @@
-Language: Python
+# NASCAR Prediction Dashboard
 
-Packages: Requests, Math, BeautifulSoup, NumPy, Matplotlib, PIL
+A local NASCAR Cup Series prediction dashboard that scrapes race data, builds track-type-specific models, and shows predicted finish distributions for the last race, next race, and selected historical races.
 
-This program is designed to predict NASCAR race results, using a logistic regression-powered machine learning algorithm. To run the program, first run getdata.py, which fetches data from driveraverages.com, analyzes it, and produces two txt files, training.txt and testing.txt. This takes just under two minutes on my laptop, but that may vary. The getdata program only needs to be ran once after each race (once a week from February to November), in order to load in all updated data. Next, run main.py. This program reads the txt files and trains a logistic regression model on the data, which takes about half a minute. 
+## What it does
 
-Once that is complete, you'll be prompted to enter a car number in the terminal. The numbers currently in use by chartered teams are: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 31, 34, 38, 41, 42, 43, 45, 47, 48, 51, 54, 77, 99 (this list of numbers will be updated once more information becomes available about the 2024 season). Hit enter after typing in a number. Next, you will be prompted to enter a track type. The three options are S (speedway), SS (superspeedway), and RC (road course). After typing one of those three options, hit enter. 
+- Scrapes completed race results from DriverAverages.
+- Uses Racing-Reference qualifying results when available.
+- Falls back to Racing-Reference entry lists when qualifying is not posted yet.
+- Builds driver history features with no future lookahead.
+- Trains separate models for:
+  - Speedway
+  - Superspeedway
+  - Road course
+- Predicts expected finish, median finish, win %, top 3, top 5, top 10, top 15, top 20, and top 25 probabilities.
+- Provides a browser dashboard for filtering, ranking, and comparing drivers.
 
-A file named graph.png will be produced instantaneously, which visually depicts a distribution of probabilities of that driver's projected result. The numbers on the x-axis refer to finishing positions, and the numbers above the bars are probabilities. For example, if the number 50 appears above the 15 bar, then this means that the driver has a 50% chance of finishing 15th or better in the race. 
+## Files
 
-The graph also uses a viridis color gradient, where yellow/green bars indicate higher likelihoods than blue/purple bars. For example, if the 20 bar is yellow, then this driver is disproportionately likely to finish around 20th. 
+```text
+app.py          Flask server for the dashboard and API routes
+getdata.py      Scrapes race data and builds training/testing datasets
+predict.py      Trains models and writes prediction JSON files
+dashboard.html  Front-end dashboard
+requirements.txt Python dependencies
+```
+
+Generated data/prediction files may include:
+
+```text
+raw_races_cache.json
+training.csv
+testing_last_race.json
+testing_next_race.json
+predictions_last_race.json
+predictions_next_race.json
+predictions_historical_index.json
+predictions_historical_YYYY_RR.json
+feature_cache.json
+```
+
+## Setup
+
+Install Python 3.10+ if you do not already have it.
+
+Then install the dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+If Racing-Reference scraping needs Playwright, install the browser package too:
+
+```bash
+playwright install chromium
+```
+
+## Running the dashboard
+
+Start the Flask app:
+
+```bash
+python3 app.py
+```
+
+Then open this in your browser:
+
+```text
+http://localhost:5000
+```
+
+## First-time data build
+
+On the first run, click **Refresh data** in the dashboard.
+
+This will:
+
+1. Build or update the raw race cache.
+2. Create training/testing datasets.
+3. Generate predictions for the last completed race and the next race.
+
+The first refresh can take longer because it may need to scrape many historical races. Later refreshes should be much faster because the cache is reused.
+
+## Dashboard tabs
+
+### Last Race
+
+Shows predictions for the most recently completed race. This uses the actual known track type and actual field/start information from the race data.
+
+### Next Race
+
+Shows predictions for the upcoming race. If qualifying is available, starting positions are used. If qualifying is not available, the app tries the entry list and uses fallback starting-position estimates.
+
+### Historical
+
+Lets you pick a past race and generate a no-lookahead prediction for that race. The model only uses data from races before the selected historical race.
+
+## Ranking and filters
+
+You can rank the field by:
+
+- Expected finish
+- Median finish
+- Win %
+
+You can also change odds format and filter by manufacturer.
+
+Selecting drivers opens the comparison panel:
+
+- 1 driver: shows driver markets and finish distribution.
+- 2 drivers: shows head-to-head comparison.
+- 3+ drivers: shows the chance each driver finishes best among the selected group.
+
+## Track types
+
+The app uses three track types:
+
+```text
+s   = Speedway
+ss  = Superspeedway
+rc  = Road course
+```
+
+For historical and known next-race predictions, only the known track type is predicted. If the next race track type is unknown, the app falls back to predicting all three track buckets.
+
+## Notes
+
+- This is a local app. It is not meant to be deployed publicly without additional cleanup.
+- Racing-Reference may show a Cloudflare challenge. If that happens, solve it in the browser window that opens.
+- Predictions are model estimates, not betting advice.
+- If results look stale, click **Refresh data**.
+
+## Common commands
+
+Run the full data/prediction pipeline manually:
+
+```bash
+python3 getdata.py
+python3 predict.py
+```
+
+Generate a historical prediction manually:
+
+```bash
+python3 predict.py --historical 2024 10
+```
+
+Start the dashboard:
+
+```bash
+python3 app.py
+```

@@ -69,11 +69,54 @@ def get_track_masks(track_types):
     }
 
 
-def train_models(X, y, track_types):
+def normalize_track_list(track_types_to_train=None):
+    """Return a clean list of track types to train. None means all tracks."""
+    if track_types_to_train is None:
+        return list(TRACKS)
+
+    if isinstance(track_types_to_train, str):
+        track_types_to_train = [track_types_to_train]
+
+    out = []
+    for tt in track_types_to_train:
+        if tt not in TRACKS:
+            raise ValueError(f"Unknown track type to train: {tt!r}")
+        if tt not in out:
+            out.append(tt)
+
+    if not out:
+        return list(TRACKS)
+    return out
+
+
+def get_required_track_types(mode_meta):
+    """
+    Decide which model buckets are actually needed for this prediction job.
+
+    Historical / last-race jobs have a known race.track_type, so only that
+    model is needed. Next-race jobs also usually know target_race.track_type;
+    if they do not, keep the old fallback and train all three.
+    """
+    mode = mode_meta.get("mode", "next_race")
+
+    if mode in {"last_race", "historical"}:
+        track_type = mode_meta.get("race", {}).get("track_type")
+        if track_type in TRACKS:
+            return [track_type]
+        return list(TRACKS)
+
+    target_track_type = mode_meta.get("target_race", {}).get("track_type")
+    if target_track_type in TRACKS:
+        return [target_track_type]
+
+    return list(TRACKS)
+
+
+def train_models(X, y, track_types, track_types_to_train=None):
     masks  = get_track_masks(track_types)
     models = {}
 
-    for tt in TRACKS:
+    for tt in normalize_track_list(track_types_to_train):
         mask = masks[tt]
         print(f"  Training {TRACK_LABELS[tt]}: {mask.sum()} rows", flush=True)
 
@@ -86,6 +129,11 @@ def train_models(X, y, track_types):
         )
         model.fit(X[mask], y[mask])
         models[tt] = model
+
+    skipped = [tt for tt in TRACKS if tt not in models]
+    if skipped:
+        pretty = ", ".join(TRACK_LABELS[tt] for tt in skipped)
+        print(f"  Skipped unused model(s): {pretty}", flush=True)
 
     return models
 
@@ -166,9 +214,8 @@ def predict_field(models, testing, mode_meta):
     For last_race mode: each driver has a single "features" vector and a
     known "track_type", so we only run the matching model.
 
-    For next_race mode: each driver has a single "features" vector but
-    track_type is unknown at getdata time, so we run all three models and
-    store results under tracks["s"], tracks["ss"], tracks["rc"] as before.
+    For next_race mode: if getdata.py knows the target track type, we only
+    run that matching model. If it does not, we fall back to all three buckets.
     """
     mode = mode_meta.get("mode", "next_race")
     cars = [k for k in testing.keys() if not str(k).startswith("_")]
@@ -235,13 +282,15 @@ def predict_field(models, testing, mode_meta):
 
 
 def write_predictions(input_training, input_testing, output_path):
-    X, y, tt = load_training(input_training)
-    models = train_models(X, y, tt)
-
     with open(input_testing) as f:
         testing = json.load(f)
 
     meta = testing.get("_meta", {})
+    required_tracks = get_required_track_types(meta)
+
+    X, y, tt = load_training(input_training)
+    models = train_models(X, y, tt, required_tracks)
+
     preds = predict_field(models, testing, meta)
 
     with open(output_path, "w") as f:
@@ -297,9 +346,12 @@ def rows_to_arrays(rows):
 
 
 def write_predictions_from_rows(training_rows, testing, output_path):
-    X, y, tt = rows_to_arrays(training_rows)
-    models = train_models(X, y, tt)
     meta = testing.get("_meta", {})
+    required_tracks = get_required_track_types(meta)
+
+    X, y, tt = rows_to_arrays(training_rows)
+    models = train_models(X, y, tt, required_tracks)
+
     preds = predict_field(models, testing, meta)
     with open(output_path, "w") as f:
         json.dump(preds, f, indent=2)

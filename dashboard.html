@@ -23,7 +23,7 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 #topbar h1 { font-family:var(--mono); font-size:13px; letter-spacing:.15em; color:var(--accent); text-transform:uppercase; white-space:nowrap; }
 .meta { font-family:var(--mono); font-size:11px; color:var(--muted); }
 .meta span { color:var(--accent); }
-#field-count { margin-left:auto; }
+#btn-refresh { margin-left:auto; }
 #toolbar { display:flex; align-items:center; gap:8px; padding:6px 16px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
 .select { height:28px; max-width:260px; background:#1a1a25; border:1px solid var(--border); border-radius:5px; color:var(--muted); font-family:var(--mono); font-size:10px; padding:0 9px; outline:none; }
 .select:hover, .select:focus { border-color:var(--accent); color:var(--text); }
@@ -119,6 +119,7 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 .subscore { font-family:var(--mono); color:var(--muted); font-size:11px; }
 #side { display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--panel); }
 #side-header { padding:14px 16px 10px; border-bottom:1px solid var(--border); flex-shrink:0; }
+#side-header-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 #side-content { flex:1; min-height:0; overflow:auto; padding:14px 16px 20px; }
 .empty { color:var(--muted); font-family:var(--mono); font-size:11px; line-height:1.7; }
 .card { background:rgba(255,255,255,.025); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px; }
@@ -156,7 +157,7 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 <div id="topbar">
   <h1>NASCAR&nbsp;Prediction&nbsp;Model</h1>
   <div class="meta" id="race-meta">—</div>
-  <div id="field-count" class="meta">field: <span id="count">—</span></div>
+  <button class="btn" id="btn-refresh" onclick="refreshData()" title="Incremental scrape + rebuild predictions">↻ Refresh data</button>
 </div>
 <div id="toolbar">
   <div class="mode-toggle" id="mode-toggle">
@@ -168,22 +169,23 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
   <select class="select" id="hist-race" style="display:none"><option value="">Race</option></select>
   <button class="btn" id="btn-run-hist" style="display:none" onclick="runHistorical()">▶ Run</button>
   <div class="divider"></div>
-  <button class="btn active" data-rank="expected_finish">Rank by Expected</button>
-  <button class="btn" data-rank="median_finish">Rank by Median</button>
-  <button class="btn" data-rank="win">Rank by Win</button>
-  <div class="divider"></div>
-  <button class="btn active" data-display="prob">Probability</button>
-  <button class="btn" data-display="frac">Fractional</button>
-  <button class="btn" data-display="ml">Moneyline</button>
-  <div class="divider"></div>
-  <button class="btn" id="select-chevy">Chevy</button>
-  <button class="btn" id="select-ford">Ford</button>
-  <button class="btn" id="select-toyota">Toyota</button>
+  <select class="select" id="rank-select" title="Rank by">
+    <option value="expected_finish">Rank by Expected</option>
+    <option value="median_finish">Rank by Median</option>
+    <option value="win">Rank by Win %</option>
+  </select>
+  <select class="select" id="display-select" title="Odds format">
+    <option value="prob">Probability</option>
+    <option value="frac">Fractional</option>
+    <option value="ml">Moneyline</option>
+  </select>
+  <select class="select" id="manufacturer-select" title="Manufacturer">
+    <option value="">Manufacturers</option>
+    <option value="Chevrolet">Chevrolet</option>
+    <option value="Ford">Ford</option>
+    <option value="Toyota">Toyota</option>
+  </select>
   <select class="select" id="team-select"><option value="">Teams</option></select>
-  <div class="divider"></div>
-  <button class="btn" id="clear">Clear selection</button>
-  <div class="divider"></div>
-  <button class="btn" id="btn-refresh" onclick="refreshData()" title="Incremental scrape + rebuild predictions">↻ Refresh data</button>
 </div>
 <div id="main">
   <section id="ranking-panel">
@@ -195,7 +197,15 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
     <div id="rank-list"></div>
   </section>
   <aside id="side">
-    <div id="side-header"><h2 id="side-title">Driver Detail</h2><div class="meta"><span id="selected-count">0</span> selected</div></div>
+    <div id="side-header">
+      <div id="side-header-top">
+        <div>
+          <h2 id="side-title">Driver Detail</h2>
+          <div class="meta"><span id="selected-count">0</span> selected</div>
+        </div>
+        <button class="btn" id="clear-selection" style="display:none">Clear selection</button>
+      </div>
+    </div>
     <div id="side-content"><div class="empty">Select one driver to see cumulative markets. Select two for head-to-head. Select 3+ for probability each finishes best of the group.</div></div>
   </aside>
 </div>
@@ -284,7 +294,7 @@ async function runHistorical(){
   if(!year||!raceNum) return;
   const btn=$('#btn-run-hist'),orig=btn.textContent;
   btn.textContent='⏳ Training…';btn.disabled=true;
-  setStatus('Training model for '+year+' race '+raceNum+' (~30 s)...');
+  setStatus('Training model for '+year+' race '+raceNum+'...');
   try{
     const res=await fetch('/api/run_historical',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({year:Number(year),race:Number(raceNum)})});
     const data=await res.json();
@@ -339,15 +349,18 @@ const ORANGE = "#ff7300";
 const GREEN  = "#00a843";
 const LIME  = "#82e31a";
 const SKY   = "#1cb2e4";
+const PALEBLUE = "hsl(210, 100%, 81%)"
 const PURPLE = "#4f00b5";
 const SILVER = "#808080";
-const GOLD = "#9b8736";
+const GOLD = "#e2ab29";
+const BEIGE = "#e2cea0"
+const BROWN = "#522a09"
 
 // Schemes can vary by season. Each season only needs to list cars whose
 // appearance differs from the default set below.
 const CAR_SCHEMES = {
   '1' : [SKY,   WHITE, BLACK],
-  '2' : [ORANGE,   WHITE, NAVY],
+  '2' : [WHITE,   BLACK, RED],
   '3' : [BLACK, REDORANGE, WHITE],
   '4' : [BLACK,  WHITE, ORANGE],
   '5' : [BLUE,   WHITE, RED],
@@ -362,7 +375,7 @@ const CAR_SCHEMES = {
   '17': [BLUE,   WHITE, BLACK],
   '19': [BLACK,    REDORANGE, WHITE],
   '20': [YELLOW, WHITE, BLACK],
-  '21': [RED,   WHITE, BLACK],
+  '21': [WHITE,   GOLD, BLACK],
   '22': [YELLOW, REDORANGE, BLACK],
   '23': [REDORANGE,    WHITE, BLACK],
   '24': [REDORANGE, YELLOW, BLACK],
@@ -370,6 +383,7 @@ const CAR_SCHEMES = {
   '34': [YELLOW, BLACK, RED],
   '35': [BLACK, WHITE, GREEN],
   '38': [BLUE, WHITE, GREEN],
+  '40': [BEIGE,   ORANGE, BROWN],
   '41': [RED,   WHITE, BLACK],
   '42': [WHITE,  GREEN, LIME],
   '43': [SKY,    WHITE, NAVY],
@@ -389,19 +403,28 @@ const CAR_SCHEMES = {
 };
 
 const CAR_SCHEMES_FORMER = {
-  // '8':  [GREEN, WHITE, BLACK, 2022, 2025],
-  // '10': [WHITE, BLACK, YELLOW, 2023]
-  '4': [SKY, WHITE, NAVY, 2022, 2023],
-  '8': [GOLD, RED, WHITE, 2022],
-  '18': [YELLOW, WHITE, BLACK, 2022],
-  '14': [BLUE, WHITE, BLACK, 2022, 2024],
+  '4': [PALEBLUE, WHITE, NAVY, 2022, 2023],
+  '7': [
+    [WHITE, ORANGE, BLACK, 2022, 2024],
+    [YELLOW, WHITE, BLACK, 2025],
+  ],
+  '8': [GOLD, REDORANGE, WHITE, 2022],
   '10': [BLACK, GOLD, WHITE, 2022, 2023],
-  '99': [BLUE,  LIME, WHITE, 2022, 2025],
+  '14': [BLUE, WHITE, BLACK, 2022, 2024],
+  '18': [YELLOW, WHITE, BLACK, 2022],
+  '31': [
+    [WHITE,  BLUE, SKY, 2024],
+    [GREEN,  WHITE, BLACK, 2022, 2023],
+  ],
   '38': [REDORANGE,  WHITE, BLACK, 2022, 2024],
-  '31': [GREEN,  WHITE, BLACK, 2022, 2023],
-  '31': [WHITE,  BLUE, SKY, 2024],
-  '42': [BLUE,  ORANGE, WHITE, 2022],
-  '42': [SILVER,  WHITE, SKY, 2023],
+  '42': [
+    [BLUE,  ORANGE, WHITE, 2022],
+    [SILVER,  WHITE, SKY, 2023],
+  ],
+  '56': [BLACK, REDORANGE, WHITE, 2025],
+  '71': [WHITE,  REDORANGE, BLACK, 2024],
+  '87': [NAVY, WHITE, RED, 2025],
+  '99': [BLUE,  LIME, WHITE, 2022, 2025],
 };
 
 function activeSeason(){
@@ -482,11 +505,13 @@ function manufacturerMatches(d, make){
   return m.includes(make.toLowerCase());
 }
 function selectManufacturer(make){
+  const teamSel = $('#team-select'); if(teamSel) teamSel.value = '';
   selected.clear();
   trackDrivers().filter(d=>manufacturerMatches(d, make)).forEach(d=>selected.add(String(d.car)));
   render();
 }
 function selectTeam(team){
+  const manSel = $('#manufacturer-select'); if(manSel) manSel.value = '';
   selected.clear();
   trackDrivers().filter(d=>String(d.team || '') === team).forEach(d=>selected.add(String(d.car)));
   render();
@@ -558,10 +583,10 @@ function render(){
   const DATA = activeData();
   // Update race meta line
   $('#race-meta').textContent = buildRaceMeta();
-  document.querySelectorAll('[data-rank]').forEach(b=>b.classList.toggle('active',b.dataset.rank===rankMode));
-  document.querySelectorAll('[data-display]').forEach(b=>b.classList.toggle('active',b.dataset.display===displayMode));
+  const rankSel = $('#rank-select'); if(rankSel) rankSel.value = rankMode;
+  const displaySel = $('#display-select'); if(displaySel) displaySel.value = displayMode;
   updateTeamSelect();
-  const drivers=filteredDrivers(); $('#count').textContent=drivers.length;
+  const drivers=filteredDrivers();
   const showStart = showStartColumn();
   $('#rank-head').classList.toggle('has-start', showStart);
   $('#rank-head').innerHTML = showStart
@@ -676,6 +701,8 @@ function compareCard(ds){
 }
 function renderSide(){
   $('#selected-count').textContent=selected.size;
+  const clearBtn = $('#clear-selection');
+  if(clearBtn) clearBtn.style.display = selected.size ? '' : 'none';
   const cars=[...selected]; const el=$('#side-content');
   if(cars.length===0){
     $('#side-title').textContent='Driver Detail';
@@ -695,13 +722,11 @@ function renderSide(){
 function buildTrackButtons(){
   document.querySelectorAll('[data-track], [data-track-divider]').forEach(b=>b.remove());
 }
-document.querySelectorAll('[data-rank]').forEach(b=>b.onclick=()=>{rankMode=b.dataset.rank; render();});
-document.querySelectorAll('[data-display]').forEach(b=>b.onclick=()=>{displayMode=b.dataset.display; render();});
-$('#select-chevy').onclick=()=>selectManufacturer('Chevrolet');
-$('#select-ford').onclick=()=>selectManufacturer('Ford');
-$('#select-toyota').onclick=()=>selectManufacturer('Toyota');
+$('#rank-select').onchange=e=>{ rankMode=e.target.value; render(); };
+$('#display-select').onchange=e=>{ displayMode=e.target.value; render(); };
+$('#manufacturer-select').onchange=e=>{ if(e.target.value) selectManufacturer(e.target.value); };
 $('#team-select').onchange=e=>{ if(e.target.value) selectTeam(e.target.value); };
-$('#clear').onclick=()=>{selected.clear(); $('#team-select').value=''; render();};
+$('#clear-selection').onclick=()=>{ selected.clear(); $('#manufacturer-select').value=''; $('#team-select').value=''; render(); };
 $('#search').oninput=e=>{query=e.target.value.trim(); render();};
 $('#hist-year').onchange=function(){ populateHistoricalRaceSelect(); DATA_HIST=null; updateRunButton(); render(); };
 $('#hist-race').onchange=function(){ DATA_HIST=null; updateRunButton(); render(); };
