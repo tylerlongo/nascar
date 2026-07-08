@@ -44,11 +44,17 @@ if errorlevel 1 (
 
 echo Installing/updating needed packages...
 python -m pip install --upgrade pip
+if errorlevel 1 (
+    echo.
+    echo ERROR: pip upgrade failed.
+    pause
+    exit /b 1
+)
 
 if exist "requirements.txt" (
     python -m pip install -r requirements.txt
 ) else (
-    python -m pip install flask pandas numpy scikit-learn requests beautifulsoup4 lxml
+    python -m pip install flask pandas numpy scikit-learn requests beautifulsoup4 lxml playwright
 )
 
 if errorlevel 1 (
@@ -56,6 +62,19 @@ if errorlevel 1 (
     echo ERROR: Package installation failed.
     pause
     exit /b 1
+)
+
+REM If Playwright is installed in this venv, make sure its Chromium browser is installed too.
+python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('playwright') else 1)" >nul 2>nul
+if %errorlevel%==0 (
+    echo Installing/checking Playwright Chromium browser...
+    python -m playwright install chromium
+    if errorlevel 1 (
+        echo.
+        echo ERROR: Playwright Chromium installation failed.
+        pause
+        exit /b 1
+    )
 )
 
 echo.
