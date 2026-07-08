@@ -9,7 +9,7 @@ echo.
 
 if not exist "app.py" (
     echo ERROR: app.py was not found in this folder.
-    echo Put this run_windows.bat file in the same folder as app.py, predict.py, getdata.py, and dashboard.html.
+    echo Put this file in the same folder as app.py, predict.py, getdata.py, and dashboard.html.
     echo.
     pause
     exit /b 1
@@ -42,14 +42,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Keep Playwright's browser attached to this project/venv instead of some random global location.
+set "PLAYWRIGHT_BROWSERS_PATH=0"
+
 echo Installing/updating needed packages...
 python -m pip install --upgrade pip
-if errorlevel 1 (
-    echo.
-    echo ERROR: pip upgrade failed.
-    pause
-    exit /b 1
-)
 
 if exist "requirements.txt" (
     python -m pip install -r requirements.txt
@@ -64,17 +61,21 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM If Playwright is installed in this venv, make sure its Chromium browser is installed too.
-python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('playwright') else 1)" >nul 2>nul
+REM If your code uses Playwright, this is the missing piece: install Chromium for THIS .venv.
+python -c "import playwright" >nul 2>nul
 if %errorlevel%==0 (
-    echo Installing/checking Playwright Chromium browser...
+    echo.
+    echo Installing/checking Playwright Chromium for this project...
     python -m playwright install chromium
     if errorlevel 1 (
         echo.
-        echo ERROR: Playwright Chromium installation failed.
+        echo ERROR: Playwright Chromium install failed.
         pause
         exit /b 1
     )
+) else (
+    echo.
+    echo Playwright is not installed in this environment; skipping Chromium install.
 )
 
 echo.
