@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NASCAR Prediction Model</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Google+Sans+Flex:opsz,wght@17,800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0f;
+  --panel: #111118;
+  --panel2: #15151f;
+  --border: #222230;
+  --accent: #fde725;
+  --text: #e8e8f0;
+  --muted: #555568;
+  --mono: 'Space Mono', monospace;
+  --sans: var(--mono);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--sans); display: flex; flex-direction: column; }
+#topbar { display:flex; align-items:center; gap:12px; padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+#topbar h1 { font-family:var(--mono); font-size:13px; letter-spacing:.15em; color:var(--accent); text-transform:uppercase; white-space:nowrap; }
+.meta { font-family:var(--mono); font-size:11px; color:var(--muted); }
+.meta span { color:var(--accent); }
+#field-count { margin-left:auto; }
+#toolbar { display:flex; align-items:center; gap:8px; padding:6px 16px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+.select { height:28px; max-width:260px; background:#1a1a25; border:1px solid var(--border); border-radius:5px; color:var(--muted); font-family:var(--mono); font-size:10px; padding:0 9px; outline:none; }
+.select:hover, .select:focus { border-color:var(--accent); color:var(--text); }
+.btn {
+  height:28px; padding:0 11px; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  background:#1a1a25; border:1px solid var(--border); border-radius:5px; color:var(--muted);
+  font-family:var(--mono); font-size:10px; cursor:pointer; user-select:none; transition:.15s;
+}
+.btn:hover { border-color:var(--accent); color:var(--text); }
+.btn.active { color:var(--text); border-color:var(--accent); background:rgba(253,231,37,.08); }
+.divider { width:1px; height:18px; background:var(--border); margin:0 3px; }
+.mode-toggle { display:inline-flex; background:#1a1a25; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+.mode-btn { height:28px; padding:0 13px; background:transparent; border:none; color:var(--muted); font-family:var(--mono); font-size:10px; cursor:pointer; transition:.15s; }
+.mode-btn:hover { color:var(--text); }
+.mode-btn.active { background:rgba(253,231,37,.12); color:var(--accent); }
+#main { display:grid; grid-template-columns:minmax(540px, 1fr) 450px; flex:1; min-height:0; overflow:hidden; }
+#ranking-panel { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border-right:1px solid var(--border); }
+#ranking-header { padding:14px 16px 10px; border-bottom:1px solid var(--border); background:var(--panel); }
+#ranking-header h2, #side h2 { font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:9px; }
+#search { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:7px 10px; font-family:var(--sans); font-size:13px; color:var(--text); outline:none; }
+#search:focus { border-color:var(--accent); }
+#rank-head { display:grid; grid-template-columns:46px 76px 1fr 105px 86px 90px; gap:10px; padding:10px 16px 8px; color:var(--muted); font-family:var(--mono); font-size:10px; border-bottom:1px solid var(--border); background:var(--panel); }
+#rank-list { flex:1; min-height:0; overflow:auto; padding:8px 12px 18px; }
+.rank-row { display:grid; grid-template-columns:46px 76px 1fr 105px 86px 90px; gap:10px; align-items:center; padding:8px 8px; border-bottom:1px solid rgba(255,255,255,.045); border-radius:4px; cursor:pointer; }
+#rank-head.has-start { grid-template-columns:46px 76px 1fr 68px 105px 86px 90px; }
+.rank-row.has-start { grid-template-columns:46px 76px 1fr 68px 105px 86px 90px; }
+.rank-row:hover { background:rgba(253,231,37,.07); }
+.rank-row.selected { background:rgba(253,231,37,.11); outline:1px solid rgba(253,231,37,.35); }
+.rank-num { font-family:var(--mono); font-size:10px; color:var(--muted); }
+.car-badge { font-family:var(--mono); color:var(--accent); font-weight:700; font-size:13px; }
+.car-tile {
+  --num-bg:#050507;
+  --num-color:var(--accent);
+  --num-outline:#ffffff;
+
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  background:var(--num-bg);
+
+  border:none;
+  border-radius:6px;
+
+  overflow:hidden;
+}
+
+.car-tile.small {
+  width:58px;
+  height:34px;
+}
+
+.car-tile.big {
+  width:140px;
+  height:82px;
+  border-radius:10px;
+}
+
+.car-tile .num-text {
+  display:block;
+
+  font-family: 'Google Sans Flex', sans-serif;
+  font-weight: 800;
+
+  font-variation-settings:
+    "wght" 800;
+
+  line-height:1;
+
+  color:var(--num-color);
+
+  -webkit-text-stroke:2.5px var(--num-outline);
+  paint-order:stroke fill;
+
+  text-shadow:none;
+
+  transform:translateY(1px);
+}
+
+.car-tile.small .num-text {
+  font-size:27px;
+}
+
+.car-tile.big .num-text {
+  font-size:65px;
+  -webkit-text-stroke:5.8px var(--num-outline);
+}
+.driver-hero { display:flex; align-items:center; gap:14px; margin:2px 0 10px; }
+.car-big { margin:0; }
+.driver-small { font-family:var(--mono); font-size:11px; color:var(--muted); margin-bottom:10px; }
+.driver-name { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.score { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); }
+.subscore { font-family:var(--mono); color:var(--muted); font-size:11px; }
+#side { display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--panel); }
+#side-header { padding:14px 16px 10px; border-bottom:1px solid var(--border); flex-shrink:0; }
+#side-content { flex:1; min-height:0; overflow:auto; padding:14px 16px 20px; }
+.empty { color:var(--muted); font-family:var(--mono); font-size:11px; line-height:1.7; }
+.card { background:rgba(255,255,255,.025); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px; }
+.card-title { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:10px; }
+.card-title b { font-family:var(--mono); color:var(--accent); font-size:13px; }
+.card-title span { font-family:var(--mono); color:var(--muted); font-size:10px; }
+.bigline { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+.metric { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:9px; }
+.metric .label { font-family:var(--mono); color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.08em; }
+.metric .value { font-family:var(--mono); font-weight:700; font-size:22px; color:var(--text); margin-top:2px; }
+.bar-row { display:grid; grid-template-columns:58px 1fr 74px; gap:8px; align-items:center; margin:8px 0; }
+.bar-label { font-family:var(--mono); font-size:10px; color:var(--muted); }
+.bar-track { height:10px; background:var(--bg); border:1px solid var(--border); border-radius:99px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:99px; }
+.bar-val { font-family:var(--mono); font-size:10px; color:var(--text); text-align:right; }
+.compare-grid { display:grid; gap:8px; }
+.compare-row { display:grid; grid-template-columns:66px 1fr 76px; gap:8px; align-items:center; }
+.note { color:var(--muted); font-family:var(--mono); font-size:10px; line-height:1.55; margin-top:8px; }
+
+.detail-top { margin-bottom:12px; }
+.market-list { margin-top:8px; }
+.stat-compact { display:grid; grid-template-columns:1fr auto; row-gap:7px; column-gap:12px; margin:12px 0 14px; }
+.stat-compact .label { font-family:var(--mono); color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+.stat-compact .value { font-family:var(--mono); color:var(--text); font-size:16px; font-weight:700; text-align:right; }
+.compare-simple { display:grid; gap:10px; }
+.compare-simple-row { display:grid; grid-template-columns:70px 1fr 78px; gap:10px; align-items:center; }
+
+::-webkit-scrollbar { width:4px; height:4px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+@media (max-width: 900px) { #main { grid-template-columns:1fr; } #side { display:none; } #rank-head, .rank-row { grid-template-columns:40px 60px 1fr 80px 70px; } #rank-head.has-start, .rank-row.has-start { grid-template-columns:40px 60px 1fr 52px 80px 70px; } #rank-head div:nth-last-child(1), .rank-row div:nth-last-child(1) { display:none; } }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <h1>NASCAR&nbsp;Prediction&nbsp;Model</h1>
+  <div class="meta" id="race-meta">—</div>
+  <div id="field-count" class="meta">field: <span id="count">—</span></div>
+</div>
+<div id="toolbar">
+  <div class="mode-toggle" id="mode-toggle">
+    <button class="mode-btn active" id="btn-last-race" onclick="setMode('last_race')">Last Race</button>
+    <button class="mode-btn" id="btn-next-race" onclick="setMode('next_race')">Next Race</button>
+    <button class="mode-btn" id="btn-historical" onclick="setMode('historical')">Historical</button>
+  </div>
+  <select class="select" id="hist-year" style="display:none"><option value="">Year</option></select>
+  <select class="select" id="hist-race" style="display:none"><option value="">Race</option></select>
+  <button class="btn" id="btn-run-hist" style="display:none" onclick="runHistorical()">▶ Run</button>
+  <div class="divider"></div>
+  <button class="btn active" data-rank="expected_finish">Rank by Expected</button>
+  <button class="btn" data-rank="median_finish">Rank by Median</button>
+  <button class="btn" data-rank="win">Rank by Win</button>
+  <div class="divider"></div>
+  <button class="btn active" data-display="prob">Probability</button>
+  <button class="btn" data-display="frac">Fractional</button>
+  <button class="btn" data-display="ml">Moneyline</button>
+  <div class="divider"></div>
+  <button class="btn" id="select-chevy">Chevy</button>
+  <button class="btn" id="select-ford">Ford</button>
+  <button class="btn" id="select-toyota">Toyota</button>
+  <select class="select" id="team-select"><option value="">Teams</option></select>
+  <div class="divider"></div>
+  <button class="btn" id="clear">Clear selection</button>
+  <div class="divider"></div>
+  <button class="btn" id="btn-refresh" onclick="refreshData()" title="Incremental scrape + rebuild predictions">↻ Refresh data</button>
+</div>
+<div id="main">
+  <section id="ranking-panel">
+    <div id="ranking-header">
+      <h2>Projected Field Ranking</h2>
+      <input id="search" placeholder="Search driver or car #…" autocomplete="off" />
+    </div>
+    <div id="rank-head"><div>#</div><div>Car</div><div>Driver</div><div>Exp Finish</div><div>Median</div><div>Top 10</div></div>
+    <div id="rank-list"></div>
+  </section>
+  <aside id="side">
+    <div id="side-header"><h2 id="side-title">Driver Detail</h2><div class="meta"><span id="selected-count">0</span> selected</div></div>
+    <div id="side-content"><div class="empty">Select one driver to see cumulative markets. Select two for head-to-head. Select 3+ for probability each finishes best of the group.</div></div>
+  </aside>
+</div>
+<script>
+let DATA_LAST=null, DATA_NEXT=null, DATA_HIST=null, HIST_INDEX=[];
+let mode='last_race';   // 'last_race' | 'next_race' | 'historical'
+let track='s', rankMode='expected_finish', displayMode='prob', selected=new Set(), query='';
+const $ = sel => document.querySelector(sel);
+const MARKET_KEYS = [
+  ['win','Win'], ['top3','Top 3'], ['top5','Top 5'], ['top10','Top 10'], ['top15','Top 15'], ['top20','Top 20'], ['top25','Top 25']
+];
+
+function activeData(){ return mode==='last_race' ? DATA_LAST : (mode==='historical' ? DATA_HIST : DATA_NEXT); }
+
+async function setMode(m){
+  mode = m;
+  selected.clear();
+  toggleHistoricalControls();
+  updateRunButton();
+  if(mode === 'historical' && HIST_INDEX.length){
+    await loadSelectedHistorical();
+  }
+  const data = activeData();
+  if(data && data.tracks){
+    const available = Object.keys(data.tracks);
+    if(!available.includes(track)) track = available[0] || 's';
+  }
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b.id===`btn-${m.replace('_','-')}`));
+  render();
+}
+function clamp(x,a,b){return Math.max(a,Math.min(b,x));}
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function toggleHistoricalControls(){
+  const show = mode === 'historical';
+  $('#hist-year').style.display = show ? '' : 'none';
+  $('#hist-race').style.display = show ? '' : 'none';
+}
+function populateHistoricalControls(){
+  const yearSel = $('#hist-year');
+  const years = [...new Set(HIST_INDEX.map(e=>String(e.season)))].sort((a,b)=>Number(b)-Number(a));
+  yearSel.innerHTML = years.length
+    ? years.map(y=>`<option value="${escapeHtml(y)}">${escapeHtml(y)}</option>`).join('')
+    : '<option value="">No saved races</option>';
+  if(years.length && !years.includes(yearSel.value)) yearSel.value = years[0];
+  populateHistoricalRaceSelect();
+}
+function populateHistoricalRaceSelect(){
+  const year = $('#hist-year').value;
+  const raceSel = $('#hist-race');
+  const races = HIST_INDEX.filter(e=>String(e.season)===String(year)).sort((a,b)=>Number(a.race_num)-Number(b.race_num));
+  raceSel.innerHTML = races.length
+    ? races.map(e=>`<option value="${escapeHtml(e.race_num)}">${String(e.race_num).padStart(2,'0')} · ${escapeHtml(e.track_name || '')}</option>`).join('')
+    : '<option value="">No races</option>';
+}
+function updateRunButton(){
+  const year=$('#hist-year').value, raceNum=$('#hist-race').value, btn=$('#btn-run-hist');
+  if(!btn) return;
+  if(mode!=='historical'||!year||!raceNum){btn.style.display='none';return;}
+  const entry=HIST_INDEX.find(e=>String(e.season)===String(year)&&String(e.race_num)===String(raceNum));
+  btn.style.display='';
+  btn.textContent=(entry&&entry.predicted)?'✓ Reload':'▶ Run';
+}
+
+async function loadSelectedHistorical(){
+  const year=$('#hist-year').value, raceNum=$('#hist-race').value;
+  const entry=HIST_INDEX.find(e=>String(e.season)===String(year)&&String(e.race_num)===String(raceNum));
+  if(!entry){DATA_HIST=null;return;}
+  if(entry.predicted){
+    setStatus(`Loading ${year} race ${raceNum}...`);
+    try{
+      const res=await fetch(entry.file+'?_='+Date.now());
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      DATA_HIST=await res.json();
+      track=Object.keys(DATA_HIST.tracks||{})[0]||'s';
+      setStatus('');
+    }catch(e){setStatus('Could not load '+entry.file+': '+e.message,true);DATA_HIST=null;}
+    return;
+  }
+  DATA_HIST=null;
+  setStatus(year+' race '+raceNum+' not yet predicted — click ▶ Run');
+}
+
+async function runHistorical(){
+  const year=$('#hist-year').value,raceNum=$('#hist-race').value;
+  if(!year||!raceNum) return;
+  const btn=$('#btn-run-hist'),orig=btn.textContent;
+  btn.textContent='⏳ Training…';btn.disabled=true;
+  setStatus('Training model for '+year+' race '+raceNum+' (~30 s)...');
+  try{
+    const res=await fetch('/api/run_historical',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({year:Number(year),race:Number(raceNum)})});
+    const data=await res.json();
+    if(!data.ok){setStatus('Error: '+(data.error||'unknown'),true);return;}
+    if(Array.isArray(data.index)){HIST_INDEX=data.index;populateHistoricalControls();updateRunButton();}
+    const fr=await fetch(data.file+'?_='+Date.now());
+    if(!fr.ok) throw new Error('Could not load result: HTTP '+fr.status);
+    DATA_HIST=await fr.json();
+    track=Object.keys(DATA_HIST.tracks||{})[0]||'s';
+    setStatus('');render();
+  }catch(e){setStatus('Failed: '+e.message,true);}
+  finally{btn.textContent=orig;btn.disabled=false;updateRunButton();}
+}
+
+async function refreshData(){
+  const btn=$('#btn-refresh'),orig=btn.textContent;
+  btn.textContent='⏳ Refreshing…';btn.disabled=true;
+  setStatus('Checking for new races and rebuilding predictions...');
+  try{
+    const res=await fetch('/api/scrape',{method:'POST'});
+    const data=await res.json();
+    if(!data.ok){setStatus('Refresh error: '+(data.error||'check console'),true);console.error(data);return;}
+    if(Array.isArray(data.index)){HIST_INDEX=data.index;populateHistoricalControls();updateRunButton();}
+    const[lr,nr]=await Promise.all([
+      fetch('predictions_last_race.json?_='+Date.now()).then(r=>r.ok?r.json():null),
+      fetch('predictions_next_race.json?_='+Date.now()).then(r=>r.ok?r.json():null),
+    ]);
+    if(lr)DATA_LAST=lr;if(nr)DATA_NEXT=nr;
+    const d=activeData();if(d&&d.tracks)track=Object.keys(d.tracks)[0]||'s';
+    setStatus('');render();
+  }catch(e){setStatus('Refresh failed: '+e.message,true);}
+  finally{btn.textContent=orig;btn.disabled=false;}
+}
+
+function setStatus(msg,isError=false){
+  const el=$('#race-meta');if(!el)return;
+  if(msg){el.textContent=msg;el.style.color=isError?'#e05c5c':'var(--muted)';}
+  else{el.textContent=buildRaceMeta();el.style.color='';}
+}
+
+// Number tile palette: [background, number fill, number outline]
+const BLACK  = "#000000";
+const WHITE  = "#ffffff";
+
+const RED    = "#c70d2f";
+const REDORANGE    = "#f32318";
+const BLUE   = "#213ddf";
+const NAVY  = "#101080";
+const YELLOW = "#ffe100";
+const NEON = "#e1ff00"
+const ORANGE = "#ff7300";
+const GREEN  = "#00a843";
+const LIME  = "#82e31a";
+const SKY   = "#1cb2e4";
+const PURPLE = "#4f00b5";
+const SILVER = "#808080";
+const GOLD = "#9b8736";
+
+// Schemes can vary by season. Each season only needs to list cars whose
+// appearance differs from the default set below.
+const CAR_SCHEMES = {
+  '1' : [SKY,   WHITE, BLACK],
+  '2' : [ORANGE,   WHITE, NAVY],
+  '3' : [BLACK, REDORANGE, WHITE],
+  '4' : [BLACK,  WHITE, ORANGE],
+  '5' : [BLUE,   WHITE, RED],
+  '6' : [GREEN,    RED, WHITE],
+  '7' : [BLUE,  LIME, WHITE],
+  '8' : [BLACK, WHITE, RED],
+  '9' : [WHITE,   BLUE, YELLOW],
+  '10': [RED, WHITE, BLACK],
+  '11': [PURPLE,    WHITE, ORANGE],
+  '12': [NEON, BLACK, WHITE],
+  '16': [WHITE,  YELLOW, BLACK],
+  '17': [BLUE,   WHITE, BLACK],
+  '19': [BLACK,    REDORANGE, WHITE],
+  '20': [YELLOW, WHITE, BLACK],
+  '21': [RED,   WHITE, BLACK],
+  '22': [YELLOW, REDORANGE, BLACK],
+  '23': [REDORANGE,    WHITE, BLACK],
+  '24': [REDORANGE, YELLOW, BLACK],
+  '33' : [BLACK, WHITE, RED],
+  '34': [YELLOW, BLACK, RED],
+  '35': [BLACK, WHITE, GREEN],
+  '38': [BLUE, WHITE, GREEN],
+  '41': [RED,   WHITE, BLACK],
+  '42': [WHITE,  GREEN, LIME],
+  '43': [SKY,    WHITE, NAVY],
+  '45': [BLACK,   RED, WHITE],
+  '47': [ORANGE,    WHITE, NAVY],
+  '48': [PURPLE,    WHITE, BLACK],
+  '51': [BLUE,   REDORANGE, WHITE],
+  '54': [BLACK, WHITE, GREEN],
+  '60': [BLUE,   WHITE, BLACK],
+  '67': [NEON,   WHITE, BLACK],
+  '71': [NAVY, WHITE, BLACK],
+  '77': [YELLOW,   WHITE, BLACK],
+  '78': [BLACK,   WHITE, RED],
+  '84': [SKY,   NAVY, YELLOW],
+  '88': [NAVY,   WHITE, RED],
+  '97': [NAVY,   WHITE, RED],
+};
+
+const CAR_SCHEMES_FORMER = {
+  // '8':  [GREEN, WHITE, BLACK, 2022, 2025],
+  // '10': [WHITE, BLACK, YELLOW, 2023]
+  '4': [SKY, WHITE, NAVY, 2022, 2023],
+  '8': [GOLD, RED, WHITE, 2022],
+  '18': [YELLOW, WHITE, BLACK, 2022],
+  '14': [BLUE, WHITE, BLACK, 2022, 2024],
+  '10': [BLACK, GOLD, WHITE, 2022, 2023],
+  '99': [BLUE,  LIME, WHITE, 2022, 2025],
+  '38': [REDORANGE,  WHITE, BLACK, 2022, 2024],
+  '31': [GREEN,  WHITE, BLACK, 2022, 2023],
+  '31': [WHITE,  BLUE, SKY, 2024],
+  '42': [BLUE,  ORANGE, WHITE, 2022],
+  '42': [SILVER,  WHITE, SKY, 2023],
+};
+
+function activeSeason(){
+  const data = activeData();
+  const mm = data?.meta?.mode_meta || {};
+  const race = mode === 'next_race' ? mm.target_race : mm.race;
+  const season = Number(race?.season ?? data?.meta?.season);
+  return Number.isFinite(season) ? season : null;
+}
+
+function carScheme(car){
+  const key = String(car);
+  const season = activeSeason();
+  const defaultScheme = CAR_SCHEMES[key] || [BLACK, WHITE, BLACK];
+
+  if(season === null || !CAR_SCHEMES_FORMER[key]) return defaultScheme;
+
+  // Accept either one entry or several entries for the same car number.
+  const raw = CAR_SCHEMES_FORMER[key];
+  const entries = Array.isArray(raw[0]) ? raw : [raw];
+
+  for(const entry of entries){
+    const [bg, color, outline, fromYear, throughYear = fromYear] = entry;
+    const from = Number(fromYear);
+    const through = Number(throughYear);
+
+    if(Number.isFinite(from) && Number.isFinite(through) && season >= from && season <= through){
+      return [bg, color, outline];
+    }
+  }
+
+  return defaultScheme;
+}
+function numberTile(car, size='small'){
+  const [bg,color,outline]=carScheme(car);
+  return `<div class="car-tile ${size}" style="--num-bg:${bg};--num-color:${color};--num-outline:${outline}"><span class="num-text">${car}</span></div>`;
+}
+function badgeColor(d){
+  const rows = marketRows(d);
+  const maxAvg = Math.max(...rows.map(r => r.avg), 0.001);
+  return viridis(rows[0].avg / maxAvg);
+}
+function asProb(p){return (100*p).toFixed(p<0.01?2:1)+'%';}
+function asFraction(p){ if(p<=0) return '—'; if(p>=1) return '1/1'; const x=(1-p)/p; return x<10 ? x.toFixed(1)+'/1' : Math.round(x)+'/1'; }
+function asMoneyline(p){ if(p<=0||p>=1) return '—'; return p>=.5 ? String(Math.round(-100*p/(1-p))) : '+'+Math.round(100*(1-p)/p); }
+function fmtP(p){ return displayMode==='prob'?asProb(p):(displayMode==='frac'?asFraction(p):asMoneyline(p)); }
+function showStartColumn(){
+  const DATA = activeData();
+  const mm = DATA?.meta?.mode_meta || {};
+  // Completed races always have start position. Next-race only shows it once qualifying is posted.
+  return mode === 'last_race' || mode === 'historical' || mm.qualifying_available === true;
+}
+function fmtStart(d){
+  const sp = Number(d.starting_position);
+  return Number.isFinite(sp) ? String(Math.round(sp)) : '—';
+}
+function viridis(t){
+  const stops=[[68,1,84],[72,35,116],[64,67,135],[52,94,141],[41,120,142],[32,144,140],[34,167,132],[68,190,112],[121,209,81],[189,223,38],[253,231,37]];
+  t=clamp(t,0,1); const s=t*(stops.length-1); const i=Math.floor(s), f=s-i;
+  if(i>=stops.length-1){const c=stops[stops.length-1];return `rgb(${c[0]},${c[1]},${c[2]})`;}
+  const a=stops[i], b=stops[i+1];
+  return `rgb(${Math.round(a[0]+f*(b[0]-a[0]))},${Math.round(a[1]+f*(b[1]-a[1]))},${Math.round(a[2]+f*(b[2]-a[2]))})`;
+}
+function driverName(d){ return d.name && d.name !== `#${d.car}` ? d.name : `Car #${d.car}`; }
+function trackDrivers(){
+  const DATA = activeData();
+  if(!DATA || !DATA.tracks || !DATA.tracks[track]) return [];
+  return Object.values(DATA.tracks[track]).map(d=>({
+    ...d,
+    name: d.name || d.driver_name || `Car #${d.car}`,
+    manufacturer: d.manufacturer || d.make || '',
+    team: d.team || d.owner || ''
+  }));
+}
+function manufacturerMatches(d, make){
+  const m = String(d.manufacturer || '').toLowerCase();
+  if(make === 'Chevrolet') return m.includes('chev');
+  return m.includes(make.toLowerCase());
+}
+function selectManufacturer(make){
+  selected.clear();
+  trackDrivers().filter(d=>manufacturerMatches(d, make)).forEach(d=>selected.add(String(d.car)));
+  render();
+}
+function selectTeam(team){
+  selected.clear();
+  trackDrivers().filter(d=>String(d.team || '') === team).forEach(d=>selected.add(String(d.car)));
+  render();
+}
+function updateTeamSelect(){
+  const sel = $('#team-select');
+  if(!sel) return;
+  const counts = {};
+  for(const d of trackDrivers()){
+    const t = String(d.team || '').trim();
+    if(t) counts[t] = (counts[t] || 0) + 1;
+  }
+  const teams = Object.entries(counts).filter(([,n])=>n>=3).sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
+  const old = sel.value;
+  sel.innerHTML = '<option value="">Teams</option>' + teams.map(([t,n])=>`<option value="${escapeHtml(t)}">${escapeHtml(t)} (${n})</option>`).join('');
+  if(teams.some(([t])=>t===old)) sel.value = old;
+}
+function filteredDrivers(){
+  let arr = trackDrivers().filter(d=>!query || String(d.car).includes(query) || driverName(d).toLowerCase().includes(query.toLowerCase()));
+  arr.sort((a,b)=>{
+    if(rankMode==='win') return (b.win||0)-(a.win||0);
+    return (a[rankMode] ?? 999) - (b[rankMode] ?? 999);
+  });
+  return arr;
+}
+function getDriver(car){ return trackDrivers().find(d=>String(d.car)===String(car)); }
+function medianFromPmf(pmf){
+  let acc=0; for(let i=0;i<pmf.length;i++){ acc += pmf[i]; if(acc>=0.5) return i+1; }
+  return pmf.length;
+}
+function cdfTop(d, n){
+  if(d.cdf && d.cdf.length) return d.cdf[Math.min(n-1,d.cdf.length-1)] || 0;
+  if(d.pmf && d.pmf.length) return d.pmf.slice(0,n).reduce((a,b)=>a+b,0);
+  return 0;
+}
+function buildRaceMeta(){
+  const data = activeData();
+  if(!data) return '—';
+  const mm = data.meta?.mode_meta || {};
+
+  if(mode === 'last_race' || mode === 'historical'){
+    const r = mm.race || {};
+    return `predicting: ${r.track_name || '?'} ${r.season || ''} race ${r.race_num || ''}`;
+  }
+
+  const t = mm.target_race || {};
+  const base = `predicting: ${t.track_name || '?'} ${t.season || ''} race ${t.race_num || ''}`;
+
+  if(mm.qualifying_available){
+    const url = mm.qualifying_url || sourceUrl('qualifying', t.season, t.race_num);
+    return `${base} · qualifying results from ${url}`;
+  }
+  if(mm.entry_list_available){
+    const url = mm.entry_list_url || sourceUrl('entry', t.season, t.race_num);
+    return `${base} · entry list from ${url}`;
+  }
+  return base;
+}
+function sourceUrl(kind, season, raceNum){
+  const y = Number(season);
+  const r = Number(raceNum);
+  if(!Number.isFinite(y) || !Number.isFinite(r)) return '';
+  const rr = String(r).padStart(2, '0');
+  if(kind === 'qualifying') return `https://www.racing-reference.info/qual-results/${y}-${rr}/W`;
+  if(kind === 'entry') return `https://www.racing-reference.info/entrylist/${y}-${rr}/W`;
+  return '';
+}
+function render(){
+  const DATA = activeData();
+  // Update race meta line
+  $('#race-meta').textContent = buildRaceMeta();
+  document.querySelectorAll('[data-rank]').forEach(b=>b.classList.toggle('active',b.dataset.rank===rankMode));
+  document.querySelectorAll('[data-display]').forEach(b=>b.classList.toggle('active',b.dataset.display===displayMode));
+  updateTeamSelect();
+  const drivers=filteredDrivers(); $('#count').textContent=drivers.length;
+  const showStart = showStartColumn();
+  $('#rank-head').classList.toggle('has-start', showStart);
+  $('#rank-head').innerHTML = showStart
+    ? '<div>#</div><div>Car</div><div>Driver</div><div>Start</div><div>Exp Finish</div><div>Median</div><div>Top 10</div>'
+    : '<div>#</div><div>Car</div><div>Driver</div><div>Exp Finish</div><div>Median</div><div>Top 10</div>';
+  $('#rank-list').innerHTML=drivers.map((d,i)=>{
+    const med = d.median_finish ?? (d.pmf ? medianFromPmf(d.pmf) : 0);
+    const top10 = d.top10 ?? cdfTop(d,10);
+    const startCell = showStart ? `<div class="subscore">${fmtStart(d)}</div>` : '';
+    return `<div class="rank-row ${showStart?'has-start ':''}${selected.has(String(d.car))?'selected':''}" data-car="${d.car}">
+      <div class="rank-num">${i+1}</div><div>${numberTile(d.car, 'small')}</div><div class="driver-name" title="${escapeHtml([d.manufacturer,d.team].filter(Boolean).join(' · '))}">${escapeHtml(driverName(d))}</div>
+      ${startCell}<div class="score">${Number(d.expected_finish||0).toFixed(1)}</div><div class="subscore">${Math.round(Number(med)||0)}</div><div class="subscore">${fmtP(top10)}</div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('.rank-row').forEach(row=>row.onclick=(e)=>{
+    const car=String(row.dataset.car);
+    if(e.shiftKey||e.metaKey||e.ctrlKey){ selected.has(car)?selected.delete(car):selected.add(car); }
+    else { if(selected.size===1&&selected.has(car)) selected.clear(); else {selected.clear(); selected.add(car);} }
+    render();
+  });
+  renderSide();
+}
+function marketRows(d){
+  const win = d.win ?? cdfTop(d,1);
+  const top3 = d.top3 ?? cdfTop(d,3);
+  const top5 = d.top5 ?? cdfTop(d,5);
+  const top10 = d.top10 ?? cdfTop(d,10);
+  const top15 = d.top15 ?? cdfTop(d,15);
+  const top20 = d.top20 ?? cdfTop(d,20);
+  const top25 = d.top25 ?? cdfTop(d,25);
+  return [
+    {label:'Win',   cum:win,   inc:win,          denom:1, range:'1'},
+    {label:'Top 3', cum:top3,  inc:top3-win,     denom:2, range:'2-3'},
+    {label:'Top 5', cum:top5,  inc:top5-top3,    denom:2, range:'4-5'},
+    {label:'Top 10',cum:top10, inc:top10-top5,   denom:5, range:'6-10'},
+    {label:'Top 15',cum:top15, inc:top15-top10,  denom:5, range:'11-15'},
+    {label:'Top 20',cum:top20, inc:top20-top15,  denom:5, range:'16-20'},
+    {label:'Top 25',cum:top25, inc:top25-top20,  denom:5, range:'21-25'}
+  ].map(r=>{
+    const inc = Math.max(0, r.inc);
+    return {...r, inc, avg: inc / r.denom};
+  });
+}
+function marketBars(d){
+  const rows = marketRows(d);
+  const maxAvg = Math.max(...rows.map(r=>r.avg), 0.001);
+  return rows.map(r=>{
+    const color = viridis(r.avg / maxAvg);
+    return `<div class="bar-row" title="P${r.range}: ${asProb(r.inc)} · per-position ${asProb(r.avg)}"><div class="bar-label">${r.label}</div><div class="bar-track"><div class="bar-fill" style="width:${clamp(r.cum*100,0,100)}%;background:${color}"></div></div><div class="bar-val">${fmtP(r.cum)}</div></div>`;
+  }).join('');
+}
+function pmfMini(d){
+  if(!d.pmf) return '';
+  const maxP = Math.max(...d.pmf, 0.001);
+  return d.pmf.map((p,i)=>`<div class="bar-row"><div class="bar-label">P${i+1}</div><div class="bar-track"><div class="bar-fill" style="width:${clamp(p/maxP*100,0,100)}%;background:${viridis(p/maxP)}"></div></div><div class="bar-val">${fmtP(p)}</div></div>`).join('');
+}
+function driverCard(d){
+  if(!d) return '<div class="empty">Driver missing.</div>';
+  const med = d.median_finish ?? (d.pmf ? medianFromPmf(d.pmf) : 0);
+  const metaBits = [d.manufacturer, d.team].filter(Boolean).map(escapeHtml).join(' · ');
+  const nameHtml = driverName(d) !== `Car #${d.car}`
+    ? `<div style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(driverName(d))}</div><div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:4px;">Car #${escapeHtml(d.car)}</div>${metaBits ? `<div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:10px;">${metaBits}</div>` : ''}`
+    : `<div style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px;">Car #${escapeHtml(d.car)}</div>${metaBits ? `<div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:10px;">${metaBits}</div>` : ''}`;
+  return `<div class="card">
+    <div class="detail-top">${numberTile(d.car, 'big')}</div>
+    ${nameHtml}
+    <div class="stat-compact">
+      ${showStartColumn() ? `<div class="label">Starting position</div><div class="value">${fmtStart(d)}</div>` : ''}
+      ${mode === 'historical' && d.actual_finish ? `<div class="label">Actual finish</div><div class="value">${Math.round(Number(d.actual_finish))}</div>` : ''}
+      <div class="label">Expected finish</div><div class="value">${Number(d.expected_finish||0).toFixed(1)}</div>
+      <div class="label">Median finish</div><div class="value">${Math.round(Number(med)||0)}</div>
+    </div>
+    <div class="market-list">${marketBars(d)}</div>
+  </div>`;
+}
+function h2h(a,b){
+  const pa=a.pmf||[], pb=b.pmf||[]; let aw=0,bw=0,tie=0;
+  for(let i=0;i<pa.length;i++) for(let j=0;j<pb.length;j++){
+    const p=pa[i]*pb[j]; if(i<j) aw+=p; else if(j<i) bw+=p; else tie+=p;
+  }
+  return [aw+tie/2,bw+tie/2];
+}
+function bestOf(ds){
+  const n=ds.length; const out=Object.fromEntries(ds.map(d=>[d.car,0]));
+  const pmfs=ds.map(d=>d.pmf||[]); const maxLen=Math.max(...pmfs.map(p=>p.length));
+  for(let k=1;k<=maxLen;k++){
+    const eq=pmfs.map(p=>p[k-1]||0);
+    const worse=pmfs.map(p=>p.slice(k).reduce((a,b)=>a+b,0));
+    for(let mask=1; mask<(1<<n); mask++){
+      let prob=1, count=0;
+      for(let i=0;i<n;i++){
+        if(mask&(1<<i)){ prob*=eq[i]; count++; }
+        else prob*=worse[i];
+      }
+      if(prob>0){ for(let i=0;i<n;i++) if(mask&(1<<i)) out[ds[i].car]+=prob/count; }
+    }
+  }
+  return out;
+}
+function compareCard(ds){
+  const best=bestOf(ds);
+  const maxP=Math.max(...Object.values(best),0.001);
+  const rows=ds
+    .slice()
+    .sort((a,b)=>best[b.car]-best[a.car])
+    .map(d=>`<div class="compare-simple-row">
+      <div>${numberTile(d.car, 'small')}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${best[d.car]*100}%;background:${viridis(best[d.car]/maxP)}"></div></div>
+      <div class="bar-val">${fmtP(best[d.car])}</div>
+    </div>`).join('');
+  return `<div class="card"><div class="compare-simple">${rows}</div></div>`;
+}
+function renderSide(){
+  $('#selected-count').textContent=selected.size;
+  const cars=[...selected]; const el=$('#side-content');
+  if(cars.length===0){
+    $('#side-title').textContent='Driver Detail';
+    el.innerHTML='<div class="empty">Select one driver to see cumulative markets. Select multiple drivers to compare.</div>';
+    return;
+  }
+  const ds=cars.map(getDriver).filter(Boolean);
+  if(ds.length===1){
+    $('#side-title').textContent='Driver Detail';
+    el.innerHTML=driverCard(ds[0]);
+    return;
+  }
+  $('#side-title').textContent='Driver Comparison';
+  el.innerHTML=compareCard(ds);
+}
+// The track type is determined by the selected race, not a user-adjustable view.
+function buildTrackButtons(){
+  document.querySelectorAll('[data-track], [data-track-divider]').forEach(b=>b.remove());
+}
+document.querySelectorAll('[data-rank]').forEach(b=>b.onclick=()=>{rankMode=b.dataset.rank; render();});
+document.querySelectorAll('[data-display]').forEach(b=>b.onclick=()=>{displayMode=b.dataset.display; render();});
+$('#select-chevy').onclick=()=>selectManufacturer('Chevrolet');
+$('#select-ford').onclick=()=>selectManufacturer('Ford');
+$('#select-toyota').onclick=()=>selectManufacturer('Toyota');
+$('#team-select').onchange=e=>{ if(e.target.value) selectTeam(e.target.value); };
+$('#clear').onclick=()=>{selected.clear(); $('#team-select').value=''; render();};
+$('#search').oninput=e=>{query=e.target.value.trim(); render();};
+$('#hist-year').onchange=function(){ populateHistoricalRaceSelect(); DATA_HIST=null; updateRunButton(); render(); };
+$('#hist-race').onchange=function(){ DATA_HIST=null; updateRunButton(); render(); };
+
+// Augment render to rebuild track buttons on each call
+const _origRender = render;
+(function patchRender(){
+  const base = render;
+  window.render = function(){
+    buildTrackButtons();
+    base();
+  };
+})();
+
+// Load prediction files and any saved historical backtests
+const errMsg = '<div class="empty">Could not load prediction files. Run predict.py, then serve this folder with <code>python3 -m http.server 8000</code>.</div>';
+(async function boot(){
+  try{
+    const st=await fetch('/api/status');
+    if(st.ok){const s=await st.json();if(Array.isArray(s.index))HIST_INDEX=s.index;}
+    populateHistoricalControls();
+    const[lr,nr]=await Promise.allSettled([
+      fetch('predictions_last_race.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}),
+      fetch('predictions_next_race.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}),
+    ]);
+    if(lr.status==='fulfilled')DATA_LAST=lr.value;
+    if(nr.status==='fulfilled')DATA_NEXT=nr.value;
+    if(!DATA_LAST&&!DATA_NEXT&&!HIST_INDEX.length){
+      $('#rank-list').innerHTML='<div class="empty">No data yet — click <b>↻ Refresh data</b> in the toolbar to get started.</div>';
+      return;
+    }
+    mode=DATA_LAST?'last_race':(DATA_NEXT?'next_race':'historical');
+    const data=activeData();
+    if(data&&data.tracks)track=Object.keys(data.tracks)[0]||'s';
+    toggleHistoricalControls();
+    updateRunButton();
+    document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.id===`btn-${mode.replace('_','-')}`));
+    if(!DATA_LAST)$('#btn-last-race').disabled=true;
+    if(!DATA_NEXT)$('#btn-next-race').disabled=true;
+    if(!HIST_INDEX.length)$('#btn-historical').disabled=true;
+    render();
+  }catch(err){$('#rank-list').innerHTML=errMsg;console.error(err);}
+})();
+</script>
+</body>
+</html>
