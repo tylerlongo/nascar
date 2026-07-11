@@ -16,7 +16,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SEASONS = range(2010, datetime.now().year + 1)
+RAW_START_YEAR = 2005
+SEASONS = range(RAW_START_YEAR, datetime.now().year + 1)
 RACES_PER_SEASON = 36
 MAX_WORKERS      = 12
 USE_RR_ENTRY_LIST = True
@@ -67,8 +68,14 @@ def get_track_type(track_name, season):
         return "s"
     return TRACK_TYPES.get(track_name)
 
-METRICS = ["finish", "mid_pos", "closer_pos", "high_pos", "low_pos", "avg_pos"]
-PCTS    = [10, 25, 50, 75]
+METRICS = [
+    "finish", "start", "mid_pos", "closer_pos", "high_pos", "low_pos", "avg_pos",
+    "pct_laps_completed", "pct_fastest_laps", "pct_laps_top15", "pct_laps_led",
+]
+PCTS    = [10, 25, 50]
+HIGHER_IS_BETTER_METRICS = {
+    "pct_laps_completed", "pct_fastest_laps", "pct_laps_top15", "pct_laps_led",
+}
 
 # ---------------------------------------------------------------------------
 # Scraping
@@ -126,6 +133,8 @@ def fetch_race(season, race_num):
             car_num      = texts[2].lstrip("#")
             driver       = texts[3]
             manufacturer = normalize_make(texts[4]) if len(texts) > 4 else ""
+            laps         = int(texts[6]) if len(texts) > 6 else 0
+            laps_led     = int(texts[7]) if len(texts) > 7 else 0
             team         = clean_cell(texts[9]) if len(texts) > 9 else ""
         except (ValueError, IndexError):
             continue
@@ -133,6 +142,8 @@ def fetch_race(season, race_num):
             "car_num":      car_num,
             "finish":       finish,
             "start":        start,                # <-- NEW
+            "laps":         laps,
+            "laps_led":     laps_led,
             "manufacturer": manufacturer,
             "team":         team,
         }
@@ -155,7 +166,9 @@ def fetch_race(season, race_num):
                     if tl == "closerpos": col_map["closer_pos"] = i
                     if tl == "highpos":   col_map["high_pos"]   = i
                     if tl == "lowpos":    col_map["low_pos"]    = i
-                    if tl == "avgpos":    col_map["avg_pos"]    = i
+                    if tl == "avgpos":      col_map["avg_pos"]      = i
+                    if tl == "fastestlaps": col_map["fastest_laps"] = i
+                    if tl == "lapsintop15": col_map["laps_top15"]   = i
                 header_found = True
             continue
 
@@ -168,12 +181,60 @@ def fetch_race(season, race_num):
         except (ValueError, IndexError):
             continue
 
-    # Keep only drivers with complete loop data
-    complete = {
-        d: v for d, v in results.items()
-        if all(k in v for k in ["mid_pos","closer_pos","high_pos","low_pos","avg_pos"])
-    }
-    return (season, race_num, track_name, complete)
+    # Normalize lap-based statistics by the winner's completed distance. This
+    # makes races of different lengths comparable and keeps all three metrics
+    # on the same 0..1 scale.
+    winner_laps = max((int(stats.get("laps") or 0) for stats in results.values()), default=0)
+    if winner_laps > 0:
+        for stats in results.values():
+            stats["pct_laps_completed"] = min(1.0, max(0.0, float(stats.get("laps", 0)) / winner_laps))
+            if stats.get("fastest_laps") is not None:
+                stats["pct_fastest_laps"] = min(1.0, max(0.0, float(stats["fastest_laps"]) / winner_laps))
+            if stats.get("laps_top15") is not None:
+                stats["pct_laps_top15"] = min(1.0, max(0.0, float(stats["laps_top15"]) / winner_laps))
+            stats["pct_laps_led"] = min(1.0, max(0.0, float(stats.get("laps_led", 0)) / winner_laps))
+
+    # DriverAverages occasionally publishes an incomplete loop-data table.
+    # Example: Homestead 2015 has 43 official result rows but only 34 loop rows.
+    # Do NOT drop the drivers missing from loop data; that shrinks the race field
+    # and makes historical predictions show only the loop-data subset.
+    # Instead, keep every official result row and fill missing loop metrics with
+    # conservative result/start-derived estimates so features can still be built.
+    loop_metrics = ["mid_pos", "closer_pos", "high_pos", "low_pos", "avg_pos"]
+    missing_loop = []
+    for driver, stats in results.items():
+        missing = [k for k in loop_metrics if k not in stats]
+        if not missing:
+            stats["loop_data_missing"] = False
+            continue
+
+        try:
+            finish_f = float(stats.get("finish"))
+        except (TypeError, ValueError):
+            finish_f = 20.0
+        try:
+            start_f = float(stats.get("start"))
+        except (TypeError, ValueError):
+            start_f = finish_f
+
+        # Positions are lower-is-better: high_pos is best, low_pos is worst.
+        fallback_avg = (start_f + finish_f) / 2.0
+        stats.setdefault("mid_pos", fallback_avg)
+        stats.setdefault("closer_pos", finish_f)
+        stats.setdefault("high_pos", min(start_f, finish_f))
+        stats.setdefault("low_pos", max(start_f, finish_f))
+        stats.setdefault("avg_pos", fallback_avg)
+        stats["loop_data_missing"] = True
+        missing_loop.append(driver)
+
+    if missing_loop:
+        print(
+            f"  WARNING: {sked_id} loop data missing for {len(missing_loop)} "
+            f"driver(s); kept full {len(results)}-driver result field with fallbacks.",
+            flush=True,
+        )
+
+    return (season, race_num, track_name, results)
 
 def scrape_all():
     jobs = [(s, r) for s in SEASONS for r in range(1, RACES_PER_SEASON + 1)]
@@ -190,6 +251,47 @@ def scrape_all():
             if done % 20 == 0:
                 print(f"  {done}/{len(jobs)} races scraped...")
     return raw
+
+
+def backfill_missing_early_races(raw):
+    """If an existing cache starts after RAW_START_YEAR, scrape older seasons once."""
+    if not raw:
+        return raw, 0
+
+    min_cached_year = min(season for season, _ in raw.keys())
+    if min_cached_year <= RAW_START_YEAR:
+        return raw, 0
+
+    jobs = [
+        (season, race_num)
+        for season in range(RAW_START_YEAR, min_cached_year)
+        for race_num in range(1, RACES_PER_SEASON + 1)
+        if (season, race_num) not in raw
+    ]
+    if not jobs:
+        return raw, 0
+
+    print(
+        f"  Cache starts at {min_cached_year}; backfilling "
+        f"{RAW_START_YEAR}-{min_cached_year - 1} once ({len(jobs)} race slots)...",
+        flush=True,
+    )
+
+    added = 0
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = {ex.submit(fetch_race, s, r): (s, r) for s, r in jobs}
+        done = 0
+        for fut in as_completed(futures):
+            done += 1
+            result = fut.result()
+            if result is not None:
+                s, r, track, drivers = result
+                raw[(s, r)] = (track, drivers)
+                added += 1
+            if done % 20 == 0 or done == len(jobs):
+                print(f"    Backfill checked {done}/{len(jobs)} slots; added {added} races...", flush=True)
+
+    return raw, added
 
 
 # ---------------------------------------------------------------------------
@@ -669,29 +771,50 @@ def fallback_start_pos(history, track_type=None):
 # Feature builder
 # ---------------------------------------------------------------------------
 def safe_pcts(arr, metric):
-    """Percentiles with neutral fallback for empty arrays."""
+    """Return performance-oriented percentile slots.
+
+    The feature names p10/p25/p50 always run from stronger to weaker
+    performance. For lower-is-better position metrics, p10 is the ordinary
+    numeric 10th percentile. For higher-is-better percentage metrics, p10 is
+    the ordinary numeric 90th percentile, p25 is numeric p75, and p50 is the median.
+    """
     if len(arr) == 0:
-        return [20.0, 20.0, 20.0, 20.0]
-    return [float(np.percentile(arr, p)) for p in PCTS]
+        fallback = {
+            "pct_laps_completed": 1.0,
+            "pct_fastest_laps": 0.0,
+            "pct_laps_top15": 0.0,
+            "pct_laps_led": 0.0,
+        }.get(metric, 20.0)
+        return [fallback] * len(PCTS)
+
+    numeric_pcts = [100 - p for p in PCTS] if metric in HIGHER_IS_BETTER_METRICS else PCTS
+    return [float(np.percentile(arr, p)) for p in numeric_pcts]
 
 
-def build_features(history, start_pos=None):
+def build_features(history, target_track_type, start_pos=None, min_history=0):
     """
     history: list of race dicts (chronological, excluding current race)
     start_pos: actual starting position for this race (int/float), or None if unknown.
 
-    Returns flat list of 73 floats, or None if < 10 races of history.
+    Returns a flat feature list. If history is short or empty, missing percentile blocks use neutral 20.0 fallbacks.
 
     Feature layout:
-      Overall windows 10/20/36 x 6 metrics x 4 pcts      = 72
-      Starting position for this race (nan=20.0 fallback) =  1
-                                                          ----
-                                                            73
+      Overall windows 10/20/36 x 11 metrics x 3 pcts          =  99
+      Target track type, last 10 x 11 metrics x 3 pcts        =  33
+      Starting position for this race (nan=20.0 fallback)     =   1
+                                                               ----
+                                                                133
+
+    target_track_type must be the type of the race represented by this row,
+    so a road-course target receives only road-course-specific history, etc.
 
     The start position is always the last feature. For next-race rows,
     unknown starts should already be replaced by fallback_start_pos().
+
+    Training rows use min_history=0 so every no-lookahead row can be used, including rookies, part-timers, and first-career-start rows.
+    For empty history, percentile features fall back to neutral 20.0 values.
     """
-    if len(history) < 10:
+    if len(history) < min_history:
         return None
 
     feats = []
@@ -703,24 +826,25 @@ def build_features(history, start_pos=None):
             vals = [r[metric] for r in w if r.get(metric) is not None]
             feats.extend(safe_pcts(vals, metric))
 
-    # Track-type specific windows (last 36 of each type)
-    for tt in ["ss", "rc", "s"]:
-        typed = [r for r in history if r["track_type"] == tt][-36:]
-        for metric in METRICS:
-            vals = [r[metric] for r in typed if r.get(metric) is not None]
-            feats.extend(safe_pcts(vals, metric))
+    # Only the target race's track type gets a specific-history block.
+    if target_track_type not in {"s", "ss", "rc"}:
+        raise ValueError(f"Unknown target track type: {target_track_type!r}")
+    typed = [r for r in history if r.get("track_type") == target_track_type][-10:]
+    for metric in METRICS:
+        vals = [r[metric] for r in typed if r.get(metric) is not None]
+        feats.extend(safe_pcts(vals, metric))
 
-    # Starting position (73rd feature)
+    # Current-race starting position (133rd feature)
     feats.append(float(start_pos) if start_pos is not None else float("nan"))
 
-    return feats  # length 73
+    return feats  # length 133
 
 
 # ---------------------------------------------------------------------------
 # Build datasets
 # ---------------------------------------------------------------------------
 
-FEATURE_CACHE_VERSION = 1
+FEATURE_CACHE_VERSION = 14
 FEATURE_CACHE_PATH = "feature_cache.json"
 
 
@@ -744,9 +868,212 @@ def _row_from_json(row):
 
 
 def _copy_history(history):
-    """Cheap JSON-safe deep copy of driver history."""
+    """Cheap JSON-safe deep copy of driver/team history."""
     return {driver: [dict(r) for r in races] for driver, races in history.items()}
 
+
+def _norm_team_name(team):
+    """Normalize noisy owner/team strings for matching across sources."""
+    t = (team or "").lower()
+    t = re.sub(r"&", " and ", t)
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    t = re.sub(r"\b(inc|llc|l l c|ltd|co|company|the)\b", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+TEAM_SYNONYMS = {
+    # Big teams / common owner-name variants
+    "Hendrick Motorsports": ["Hendrick Motorsports", "Rick Hendrick", "Hendrick", "Mr. H"],
+    "Joe Gibbs Racing": ["Joe Gibbs Racing", "Joe Gibbs", "JGR"],
+    "Team Penske": ["Team Penske", "Penske Racing", "Roger Penske", "Penske"],
+    "RFK Racing": ["RFK Racing", "Roush Fenway Keselowski Racing", "Roush Fenway Racing", "Roush Racing", "Jack Roush", "Brad Keselowski"],
+    "Richard Childress Racing": ["Richard Childress Racing", "Richard Childress", "RCR"],
+    "Trackhouse Racing": ["Trackhouse Racing", "Trackhouse Racing Team", "Justin Marks", "Trackhouse"],
+    "23XI Racing": ["23XI Racing", "23XI", "Denny Hamlin", "Michael Jordan"],
+    "Wood Brothers Racing": ["Wood Brothers Racing", "Wood Brothers", "Wood Bros", "Eddie Wood", "Len Wood"],
+
+    # Current / recent mid-pack and smaller teams
+    "Front Row Motorsports": ["Front Row Motorsports", "Front Row", "Bob Jenkins"],
+    "Spire Motorsports": ["Spire Motorsports", "Spire", "Jeff Dickerson", "T.J. Puchyr"],
+    "Kaulig Racing": ["Kaulig Racing", "Matt Kaulig", "Kaulig"],
+    "Legacy Motor Club": ["Legacy Motor Club", "Legacy M.C.", "Legacy MC", "Petty GMS", "GMS Racing", "Maury Gallagher", "Jimmie Johnson", "Richard Petty"],
+    "Rick Ware Racing": ["Rick Ware Racing", "Rick Ware", "RWR"],
+    "Haas Factory Team": ["Haas Factory Team", "Stewart-Haas Racing", "Stewart Haas Racing", "Gene Haas", "Tony Stewart", "SHR"],
+    "Hyak Motorsports": ["Hyak Motorsports", "JTG Daugherty Racing", "JTG Daugherty", "JTG", "Gordon Smith", "Tad Geschickter", "Brad Daugherty"],
+    "AJ Allmendinger Racing": ["AJ Allmendinger Racing"],
+
+    # Part-time / open teams that show up in entry lists
+    "Live Fast Motorsports": ["Live Fast Motorsports", "Live Fast", "B.J. McLeod", "BJ McLeod", "Matt Tifft"],
+    "Beard Motorsports": ["Beard Motorsports", "Beard", "Linda Beard", "Mark Beard"],
+    "NY Racing Team": ["NY Racing Team", "NY Racing", "John Cohen"],
+    "MBM Motorsports": ["MBM Motorsports", "Motorsports Business Management", "MBM", "Carl Long"],
+    "Team AmeriVet": ["Team AmeriVet", "AmeriVet", "The Money Team Racing", "TMT Racing", "Floyd Mayweather"],
+    "Tricon Garage": ["Tricon Garage", "TRICON Garage", "David Gilliland Racing", "DGR"],
+}
+
+_TEAM_ALIAS_TO_CANONICAL = {}
+for _canonical_team, _aliases in TEAM_SYNONYMS.items():
+    for _alias in [_canonical_team, *_aliases]:
+        _TEAM_ALIAS_TO_CANONICAL[_norm_team_name(_alias)] = _canonical_team
+
+
+def canonical_team_name(team):
+    """Return a stable team bucket for DriverAverages/Racing-Reference names."""
+    norm = _norm_team_name(team)
+    if not norm:
+        return ""
+    if norm in _TEAM_ALIAS_TO_CANONICAL:
+        return _TEAM_ALIAS_TO_CANONICAL[norm]
+
+    # Fuzzy contains-based fallback for entries like "Rick Hendrick #5".
+    for alias_norm, canonical in _TEAM_ALIAS_TO_CANONICAL.items():
+        if alias_norm and (alias_norm in norm or norm in alias_norm):
+            return canonical
+
+    return clean_cell(team)
+
+
+def _finite_float(value):
+    try:
+        x = float(value)
+        if np.isfinite(x):
+            return x
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _synthetic_history_row(value, track_type=None, start_pos=None, source="synthetic"):
+    """Build one filler history row from a single estimated running-position value."""
+    tt = track_type if track_type in {"s", "ss", "rc"} else "s"
+    v = _finite_float(value)
+    if v is None:
+        v = _finite_float(start_pos)
+    if v is None:
+        v = 20.0
+
+    start = _finite_float(start_pos)
+    if start is None:
+        start = v
+
+    return {
+        "finish":     v,
+        "start":      start,
+        "mid_pos":    v,
+        "closer_pos": v,
+        "high_pos":   v,
+        "low_pos":    v,
+        "avg_pos":    v,
+        "track_type": tt,
+        "season":     None,
+        "driver":     "",
+        "car_num":    "",
+        "team":       "",
+        "canonical_team": "",
+        "synthetic":  source,
+    }
+
+
+def _recent_avg_pos_values(rows, limit=None):
+    vals = [_finite_float(r.get("avg_pos")) for r in (rows or [])]
+    vals = [v for v in vals if v is not None]
+    if limit is not None:
+        vals = vals[-int(limit):]
+    return vals
+
+
+def _cycled_values(values, count):
+    """Repeat available values until count is reached, preserving chronology."""
+    values = list(values or [])
+    if not values or count <= 0:
+        return []
+    out = []
+    i = 0
+    while len(out) < count:
+        out.append(values[i % len(values)])
+        i += 1
+    return out
+
+
+def _history_with_team_padding(history, team_name, team_history, track_type=None, min_len=10, start_pos=None):
+    """
+    Use real driver history first, then make under-10 histories modelable without
+    neutral 20.0 padding:
+
+      1. Fill missing rows from the driver's most recent avg_pos values.
+      2. If that is not enough, fill from the current team's recent avg_pos values.
+      3. If there still are not enough values, repeat the values we do have.
+      4. If neither driver nor team history exists, fill with qualifying/start
+         position. Only if start is also unknown does the final safety fallback
+         become 20.0.
+
+    Filler rows are placed before the real driver rows so real driver starts
+    remain the most recent rows in the rolling windows.
+    """
+    base = [dict(r) for r in (history or [])]
+    missing = max(0, int(min_len) - len(base))
+    canonical = canonical_team_name(team_name)
+
+    if missing == 0:
+        return base, 0, 0, canonical, 0, 0
+
+    filler_rows = []
+    driver_avg_fill_count = 0
+    team_avg_fill_count = 0
+    start_fill_count = 0
+
+    # First pass: use each available recent driver avg_pos at most once.
+    driver_vals = _recent_avg_pos_values(base, limit=missing)
+    for v in driver_vals:
+        if len(filler_rows) >= missing:
+            break
+        filler_rows.append(_synthetic_history_row(
+            v, track_type=track_type, start_pos=start_pos, source="driver_avg_pos"
+        ))
+        driver_avg_fill_count += 1
+
+    # Second pass: if driver values were not enough, use recent team avg_pos.
+    remaining = missing - len(filler_rows)
+    team_vals = []
+    if remaining > 0 and canonical:
+        team_vals = _recent_avg_pos_values(team_history.get(canonical, []), limit=remaining)
+        for v in team_vals:
+            if len(filler_rows) >= missing:
+                break
+            filler_rows.append(_synthetic_history_row(
+                v, track_type=track_type, start_pos=start_pos, source="team_avg_pos"
+            ))
+            team_avg_fill_count += 1
+
+    # Third pass: if we have some information but not enough unique rows, repeat
+    # the driver/team avg_pos values we do have until the 10-row floor is met.
+    remaining = missing - len(filler_rows)
+    if remaining > 0:
+        repeat_pool = driver_vals + team_vals
+        if repeat_pool:
+            repeated = _cycled_values(repeat_pool, remaining)
+            for i, v in enumerate(repeated):
+                source = "driver_avg_pos_repeat" if driver_vals and i % len(repeat_pool) < len(driver_vals) else "team_avg_pos_repeat"
+                filler_rows.append(_synthetic_history_row(
+                    v, track_type=track_type, start_pos=start_pos, source=source
+                ))
+                if source.startswith("driver"):
+                    driver_avg_fill_count += 1
+                else:
+                    team_avg_fill_count += 1
+        else:
+            # Brand-new driver + no known team history: make the missing history
+            # look like their qualifying/start position.
+            value = _finite_float(start_pos)
+            for _ in range(remaining):
+                filler_rows.append(_synthetic_history_row(
+                    value, track_type=track_type, start_pos=start_pos, source="start_pos"
+                ))
+                start_fill_count += 1
+
+    padded = filler_rows + base
+    return padded, team_avg_fill_count, 0, canonical, driver_avg_fill_count, start_fill_count
 
 def _drivers_by_season(raw):
     out = {}
@@ -756,7 +1083,62 @@ def _drivers_by_season(raw):
     return out
 
 
-def _history_row(stats, track_type, season):
+def _recent_active_driver_history(history, current_season):
+    """
+    Return only the driver's current active stint.
+
+    Current-season starts are always allowed because the season is still in
+    progress. Then walk backward through completed seasons and stop at the
+    first full season where this driver had no starts. This prevents old
+    pre-gap history from being treated like recent form, while still letting
+    part-time drivers use 2025/2024/etc. when they have only a few starts so
+    far in the current season.
+    """
+    rows = [dict(r) for r in (history or [])]
+    try:
+        current_season = int(current_season)
+    except (TypeError, ValueError):
+        return rows
+
+    by_season = {}
+    no_season_rows = []
+    for row in rows:
+        season = row.get("season")
+        try:
+            season_i = int(season)
+        except (TypeError, ValueError):
+            no_season_rows.append(row)
+            continue
+        by_season.setdefault(season_i, []).append(row)
+
+    keep_seasons = set()
+
+    # The current season is partial, so 0 starts this year should not block
+    # us from looking at last year.
+    if current_season in by_season:
+        keep_seasons.add(current_season)
+
+    season = current_season - 1
+    while season >= RAW_START_YEAR:
+        if season not in by_season:
+            break
+        keep_seasons.add(season)
+        season -= 1
+
+    kept = []
+    for row in rows:
+        try:
+            season_i = int(row.get("season"))
+        except (TypeError, ValueError):
+            continue
+        if season_i in keep_seasons:
+            kept.append(row)
+
+    return kept + no_season_rows
+
+
+def _history_row(stats, track_type, season, driver=None):
+    team = stats.get("team", "")
     return {
         "finish":     stats["finish"],
         "start":      stats.get("start"),
@@ -765,12 +1147,22 @@ def _history_row(stats, track_type, season):
         "high_pos":   stats["high_pos"],
         "low_pos":    stats["low_pos"],
         "avg_pos":    stats["avg_pos"],
+        "pct_laps_completed": stats.get("pct_laps_completed"),
+        "pct_fastest_laps":   stats.get("pct_fastest_laps"),
+        "pct_laps_top15":     stats.get("pct_laps_top15"),
+        "pct_laps_led":       stats.get("pct_laps_led"),
         "track_type": track_type,
         "season":     season,
+        "driver":     driver or "",
+        "car_num":    str(stats.get("car_num", "")).strip(),
+        "team":       team,
+        "canonical_team": canonical_team_name(team),
+        "synthetic":  "",
     }
 
 
-def _build_training_rows_for_one_race(raw, key, driver_history, drivers_by_season, norm_to_driver, car_to_driver):
+
+def _build_training_rows_for_one_race(raw, key, driver_history, team_history, drivers_by_season, norm_to_driver, car_to_driver):
     """
     Build training rows for exactly one completed race using driver_history
     BEFORE the race, then mutate driver_history so it includes the race.
@@ -787,12 +1179,21 @@ def _build_training_rows_for_one_race(raw, key, driver_history, drivers_by_seaso
     for driver, stats in drivers.items():
         history = driver_history.get(driver, [])
 
-        if driver in prev_season_drivers and season >= 2011:
-            feats = build_features(history, start_pos=stats.get("start"))
-            if feats is not None:
-                rows.append((feats, stats["finish"], track_type))
+        # Use every completed race row for training. If the driver has little or
+        # no prior history, pad the pre-race history exactly like prediction rows:
+        # driver recent avg_pos first, then team avg_pos, then qualifying/start.
+        padded_history, *_ = _history_with_team_padding(
+            history, stats.get("team", ""), team_history,
+            track_type=track_type, min_len=10, start_pos=stats.get("start")
+        )
+        feats = build_features(padded_history, target_track_type=track_type, start_pos=stats.get("start"), min_history=0)
+        rows.append((feats, stats["finish"], track_type))
 
-        driver_history.setdefault(driver, []).append(_history_row(stats, track_type, season))
+        row = _history_row(stats, track_type, season, driver=driver)
+        driver_history.setdefault(driver, []).append(row)
+        canonical_team = row.get("canonical_team", "")
+        if canonical_team:
+            team_history.setdefault(canonical_team, []).append(row)
         norm_to_driver[norm_driver_name(driver)] = driver
 
         car_num_for_lookup = str(stats.get("car_num", "")).strip()
@@ -809,6 +1210,8 @@ def _new_empty_feature_cache():
         "training_by_race": {},
         "driver_history_after_latest": {},
         "driver_history_before_latest": {},
+        "team_history_after_latest": {},
+        "team_history_before_latest": {},
         "norm_to_driver": {},
         "car_to_driver": {},
     }
@@ -864,6 +1267,7 @@ def _prepare_feature_cache(raw):
         print("  Building feature cache from raw races...", flush=True)
         cache = _new_empty_feature_cache()
         driver_history = {}
+        team_history = {}
         norm_to_driver = {}
         car_to_driver = {}
         training_by_race = {}
@@ -872,9 +1276,10 @@ def _prepare_feature_cache(raw):
         for i, key in enumerate(race_keys, start=1):
             if key == latest_key:
                 cache["driver_history_before_latest"] = _copy_history(driver_history)
+                cache["team_history_before_latest"] = _copy_history(team_history)
 
             rows = _build_training_rows_for_one_race(
-                raw, key, driver_history, drivers_by_season, norm_to_driver, car_to_driver
+                raw, key, driver_history, team_history, drivers_by_season, norm_to_driver, car_to_driver
             )
             training_by_race[_race_key_str(key)] = [_row_to_json(r) for r in rows]
 
@@ -884,6 +1289,7 @@ def _prepare_feature_cache(raw):
         cache["race_keys"] = wanted_key_strings
         cache["training_by_race"] = training_by_race
         cache["driver_history_after_latest"] = driver_history
+        cache["team_history_after_latest"] = team_history
         cache["norm_to_driver"] = norm_to_driver
         cache["car_to_driver"] = car_to_driver
         _save_feature_cache(cache)
@@ -899,6 +1305,7 @@ def _prepare_feature_cache(raw):
     print(f"  Feature cache is {len(cached_key_strings)} races behind; appending {len(new_keys)} new race(s)...", flush=True)
 
     driver_history = cache.get("driver_history_after_latest", {})
+    team_history = cache.get("team_history_after_latest", {})
     norm_to_driver = cache.get("norm_to_driver", {})
     car_to_driver = cache.get("car_to_driver", {})
     training_by_race = cache.get("training_by_race", {})
@@ -907,9 +1314,10 @@ def _prepare_feature_cache(raw):
     for key in new_keys:
         if key == latest_key:
             cache["driver_history_before_latest"] = _copy_history(driver_history)
+            cache["team_history_before_latest"] = _copy_history(team_history)
 
         rows = _build_training_rows_for_one_race(
-            raw, key, driver_history, drivers_by_season, norm_to_driver, car_to_driver
+            raw, key, driver_history, team_history, drivers_by_season, norm_to_driver, car_to_driver
         )
         training_by_race[_race_key_str(key)] = [_row_to_json(r) for r in rows]
         print(f"    Added feature rows for {_race_key_str(key)} ({len(rows)} rows).", flush=True)
@@ -917,6 +1325,7 @@ def _prepare_feature_cache(raw):
     cache["race_keys"] = wanted_key_strings
     cache["training_by_race"] = training_by_race
     cache["driver_history_after_latest"] = driver_history
+    cache["team_history_after_latest"] = team_history
     cache["norm_to_driver"] = norm_to_driver
     cache["car_to_driver"] = car_to_driver
     _save_feature_cache(cache)
@@ -932,6 +1341,19 @@ def _rows_for_keys(cache, keys):
     return rows
 
 
+def training_start_year_for_target(target_season):
+    """Training always uses every available season from 2005 onward."""
+    return RAW_START_YEAR
+
+
+def training_keys_for_target(race_keys, target_key):
+    """All completed race keys from 2005 onward, strictly before target_key."""
+    return [
+        key for key in race_keys
+        if key < target_key and key[0] >= RAW_START_YEAR
+    ]
+
+
 def build_datasets(raw):
     print('Building training/testing datasets...', flush=True)
     race_keys = sorted(raw.keys())
@@ -944,11 +1366,38 @@ def build_datasets(raw):
 
     cache = _prepare_feature_cache(raw)
 
-    training = _rows_for_keys(cache, race_keys)
-    last_race_training = _rows_for_keys(cache, race_keys[:-1])
+    # Model training uses every completed race from 2005 onward.
+    # The target race itself and all later races remain excluded to prevent leakage.
+    target_season   = latest_season
+    target_race_num = latest_race_num + 1
+    if target_race_num > RACES_PER_SEASON:
+        target_season += 1
+        target_race_num = 1
+
+    next_target_key = (target_season, target_race_num)
+    last_target_key = latest_key
+
+    training_keys = training_keys_for_target(race_keys, next_target_key)
+    last_race_training_keys = training_keys_for_target(race_keys, last_target_key)
+
+    training = _rows_for_keys(cache, training_keys)
+    last_race_training = _rows_for_keys(cache, last_race_training_keys)
+
+    print(
+        f"  Next-race training history: {training_start_year_for_target(target_season)}+ "
+        f"through {_race_key_str(latest_key)} ({len(training)} rows).",
+        flush=True,
+    )
+    print(
+        f"  Last-race training history: {training_start_year_for_target(latest_season)}+ "
+        f"through races before {_race_key_str(latest_key)} ({len(last_race_training)} rows).",
+        flush=True,
+    )
 
     driver_history = cache.get("driver_history_after_latest", {})
     dh_excl = cache.get("driver_history_before_latest", {})
+    team_history = cache.get("team_history_after_latest", {})
+    th_excl = cache.get("team_history_before_latest", {})
     norm_to_driver = cache.get("norm_to_driver", {})
     car_to_driver = cache.get("car_to_driver", {})
 
@@ -964,34 +1413,51 @@ def build_datasets(raw):
             "track_type": get_track_type(latest_track_name, latest_season),
         },
         "qualifying_available": True,
+        "training_window": {
+            "window_years": None,
+            "start_year": training_start_year_for_target(latest_season),
+            "end_before": _race_key_str(latest_key),
+        },
     }}
 
     skipped_last = []
     for driver, stats in latest_race_drivers.items():
         car_num = str(stats.get("car_num", "")).strip()
-        history = dh_excl.get(driver, [])
-        feats = build_features(history, start_pos=stats.get("start"))
+        history = _recent_active_driver_history(dh_excl.get(driver, []), latest_season)
+        race_track_type = get_track_type(latest_track_name, latest_season)
+        padded_history, team_fill_count, neutral_fill_count, canonical_team, driver_avg_fill_count, start_fill_count = _history_with_team_padding(
+            history, stats.get("team", ""), th_excl,
+            track_type=race_track_type, min_len=10, start_pos=stats.get("start")
+        )
+        feats = build_features(padded_history, target_track_type=race_track_type, start_pos=stats.get("start"), min_history=0)
         if feats is None:
             skipped_last.append(driver)
             continue
+        history_count = len(history)
         last_race_testing[car_num] = {
-            "driver_name":         driver,
-            "history_driver_name": driver,
-            "manufacturer":        stats.get("manufacturer", ""),
-            "team":                stats.get("team", ""),
-            "features":            feats,
-            "track_type":          get_track_type(latest_track_name, latest_season),
+            "driver_name":                driver,
+            "history_driver_name":        driver,
+            "manufacturer":               stats.get("manufacturer", ""),
+            "team":                       stats.get("team", ""),
+            "canonical_team":             canonical_team,
+            "features":                   feats,
+            "history_count":              history_count,
+            "model_history_count":        len(padded_history),
+            "team_history_fill_count":    team_fill_count,
+            "neutral_history_fill_count": neutral_fill_count,
+            "driver_avg_fill_count":      driver_avg_fill_count,
+            "start_pos_fill_count":       start_fill_count,
+            "limited_history":            history_count < 10,
+            "track_type":                 race_track_type,
+            "actual_finish":              stats.get("finish"),
         }
 
     if skipped_last:
-        print(f"  Last-race: skipped {len(skipped_last)} drivers with <10 races history.")
+        print(f"  Last-race: skipped {len(skipped_last)} drivers because features could not be built.")
 
     # -----------------------------------------------------------------------
     # "Next race" testing set
     # -----------------------------------------------------------------------
-    target_season   = latest_season
-    target_race_num = latest_race_num + 1
-
     print(f'Fetching schedule for {target_season}...', flush=True)
     schedule = scrape_driveraverages_schedule(target_season)
     target_track_name = schedule.get(target_race_num)
@@ -1089,6 +1555,11 @@ def build_datasets(raw):
                 "track_name": target_track_name,
                 "track_type": target_track_type,
             },
+            "training_window": {
+                "window_years": None,
+                "start_year": training_start_year_for_target(target_season),
+                "end_before": _race_key_str((target_season, target_race_num)),
+            },
         }
     }
 
@@ -1098,44 +1569,68 @@ def build_datasets(raw):
         car_num   = str(entry_info["car_num"]).strip()
         rr_norm   = norm_driver_name(rr_driver)
 
-        if car_num in car_to_driver:
-            exact_driver = car_to_driver[car_num]
-            rr_is_name = not rr_driver.isdigit() and len(rr_driver) > 3
-            rr_prefix = rr_norm[:3]
-            da_prefix = norm_driver_name(exact_driver)[:3]
-            if rr_is_name and rr_prefix and da_prefix and rr_prefix != da_prefix:
-                print(
-                    f"  WARNING: car #{car_num} name mismatch — "
-                    f"RR={rr_driver!r} vs DriverAverages={exact_driver!r}"
-                )
-        elif rr_driver in driver_history:
+        # Prefer the actual listed driver name over the current car-number mapping.
+        # Car numbers move between drivers (especially part-time cars like #78),
+        # so using car_to_driver first can incorrectly give B.J. McLeod the history
+        # of the most recent #78 driver. Only fall back to car number if the
+        # Racing-Reference/entry-list name cannot be matched to DriverAverages.
+        rr_is_name = not rr_driver.isdigit() and len(rr_driver) > 3
+
+        if rr_driver in driver_history:
             exact_driver = rr_driver
         elif rr_norm in norm_to_driver:
             exact_driver = norm_to_driver[rr_norm]
+        elif car_num in car_to_driver:
+            exact_driver = car_to_driver[car_num]
         else:
             exact_driver = rr_driver
 
-        history = driver_history.get(exact_driver, [])
+        if car_num in car_to_driver and rr_is_name:
+            car_driver = car_to_driver[car_num]
+            rr_prefix = rr_norm[:3]
+            da_prefix = norm_driver_name(car_driver)[:3]
+            if rr_prefix and da_prefix and rr_prefix != da_prefix:
+                print(
+                    f"  NOTE: car #{car_num} latest DriverAverages mapping is "
+                    f"{car_driver!r}, but entry-list driver is {rr_driver!r}; "
+                    f"using driver-name history."
+                )
+
+        history = _recent_active_driver_history(driver_history.get(exact_driver, []), target_season)
 
         start_pos = qual_positions.get(car_num, None)
         if start_pos is None:
             start_pos = fallback_start_pos(history, track_type=target_track_type)
 
-        feats = build_features(history, start_pos=start_pos)
+        padded_history, team_fill_count, neutral_fill_count, canonical_team, driver_avg_fill_count, start_fill_count = _history_with_team_padding(
+            history, entry_info.get("team", ""), team_history,
+            track_type=target_track_type, min_len=10, start_pos=start_pos
+        )
+
+        feats = build_features(padded_history, target_track_type=target_track_type, start_pos=start_pos, min_history=0)
         if feats is None:
             skipped_next.append(rr_driver)
             continue
 
+        history_count = len(history)
         next_race_testing[car_num] = {
-            "driver_name":         rr_driver,
-            "history_driver_name": exact_driver,
-            "manufacturer":        entry_info.get("manufacturer", ""),
-            "team":                entry_info.get("team", ""),
-            "features":            feats,
+            "driver_name":                rr_driver,
+            "history_driver_name":        exact_driver,
+            "manufacturer":               entry_info.get("manufacturer", ""),
+            "team":                       entry_info.get("team", ""),
+            "canonical_team":             canonical_team,
+            "features":                   feats,
+            "history_count":              history_count,
+            "model_history_count":        len(padded_history),
+            "team_history_fill_count":    team_fill_count,
+            "neutral_history_fill_count": neutral_fill_count,
+            "driver_avg_fill_count":      driver_avg_fill_count,
+            "start_pos_fill_count":       start_fill_count,
+            "limited_history":            history_count < 10,
         }
 
     if skipped_next:
-        print(f"  Next-race: skipped {len(skipped_next)} drivers with <10 races history: "
+        print(f"  Next-race: skipped {len(skipped_next)} drivers because features could not be built: "
               + ", ".join(skipped_next[:8]))
         if len(skipped_next) > 8:
             print("  ...")
@@ -1172,7 +1667,9 @@ def build_datasets_for_race(raw, target_season, target_race_num):
             drivers_by_season.setdefault(season, set()).add(driver)
 
     driver_history = {}
+    team_history = {}
     training = []
+    training_start_year = training_start_year_for_target(int(target_season))
 
     for key in race_keys:
         if key >= target_key:
@@ -1189,22 +1686,22 @@ def build_datasets_for_race(raw, target_season, target_race_num):
         for driver, stats in drivers.items():
             history = driver_history.get(driver, [])
 
-            if driver in prev_season_drivers and season >= 2011:
-                feats = build_features(history, start_pos=stats.get("start"))
-                if feats is not None:
-                    training.append((feats, stats["finish"], track_type))
+            if season >= training_start_year:
+                # Use every no-lookahead training row, even with limited or zero
+                # prior driver history. Pad under-10 histories the same way as
+                # prediction rows, using only information available before this race.
+                padded_history, *_ = _history_with_team_padding(
+                    history, stats.get("team", ""), team_history,
+                    track_type=track_type, min_len=10, start_pos=stats.get("start")
+                )
+                feats = build_features(padded_history, target_track_type=track_type, start_pos=stats.get("start"), min_history=0)
+                training.append((feats, stats["finish"], track_type))
 
-            driver_history.setdefault(driver, []).append({
-                "finish":     stats["finish"],
-                "start":      stats.get("start"),
-                "mid_pos":    stats["mid_pos"],
-                "closer_pos": stats["closer_pos"],
-                "high_pos":   stats["high_pos"],
-                "low_pos":    stats["low_pos"],
-                "avg_pos":    stats["avg_pos"],
-                "track_type": track_type,
-                "season":     season,
-            })
+            row = _history_row(stats, track_type, season, driver=driver)
+            driver_history.setdefault(driver, []).append(row)
+            canonical_team = row.get("canonical_team", "")
+            if canonical_team:
+                team_history.setdefault(canonical_team, []).append(row)
 
     testing = {
         "_meta": {
@@ -1220,6 +1717,11 @@ def build_datasets_for_race(raw, target_season, target_race_num):
                 "before_season": int(target_season),
                 "before_race_num": int(target_race_num),
             },
+            "training_window": {
+                "window_years": None,
+                "start_year": training_start_year,
+                "end_before": _race_key_str(target_key),
+            },
         }
     }
 
@@ -1228,27 +1730,215 @@ def build_datasets_for_race(raw, target_season, target_race_num):
         car_num = str(stats.get("car_num", "")).strip()
         if not car_num:
             continue
-        history = driver_history.get(driver, [])
-        feats = build_features(history, start_pos=stats.get("start"))
+        history = _recent_active_driver_history(driver_history.get(driver, []), int(target_season))
+        padded_history, team_fill_count, neutral_fill_count, canonical_team, driver_avg_fill_count, start_fill_count = _history_with_team_padding(
+            history, stats.get("team", ""), team_history,
+            track_type=target_track_type, min_len=10, start_pos=stats.get("start")
+        )
+        feats = build_features(padded_history, target_track_type=target_track_type, start_pos=stats.get("start"), min_history=0)
         if feats is None:
             skipped.append(driver)
             continue
 
+        history_count = len(history)
         testing[car_num] = {
-            "driver_name":         driver,
-            "history_driver_name": driver,
-            "manufacturer":        stats.get("manufacturer", ""),
-            "team":                stats.get("team", ""),
-            "features":            feats,
-            "track_type":          target_track_type,
-            "actual_finish":       stats.get("finish"),
+            "driver_name":                driver,
+            "history_driver_name":        driver,
+            "manufacturer":               stats.get("manufacturer", ""),
+            "team":                       stats.get("team", ""),
+            "canonical_team":             canonical_team,
+            "features":                   feats,
+            "history_count":              history_count,
+            "model_history_count":        len(padded_history),
+            "team_history_fill_count":    team_fill_count,
+            "neutral_history_fill_count": neutral_fill_count,
+            "driver_avg_fill_count":      driver_avg_fill_count,
+            "start_pos_fill_count":       start_fill_count,
+            "limited_history":            history_count < 10,
+            "track_type":                 target_track_type,
+            "actual_finish":              stats.get("finish"),
         }
 
     if skipped:
-        print(f"  Historical {target_season}-{target_race_num}: skipped {len(skipped)} drivers with <10 races history.")
+        print(f"  Historical {target_season}-{target_race_num}: skipped {len(skipped)} drivers because features could not be built.")
 
     return training, testing
 
+
+
+def _build_historical_testing_from_state(
+    target_season, target_race_num, target_track_name, target_drivers,
+    driver_history, team_history,
+):
+    """Build one historical target field from histories as they stood pre-race."""
+    target_season = int(target_season)
+    target_race_num = int(target_race_num)
+    target_key = (target_season, target_race_num)
+    target_track_type = get_track_type(target_track_name, target_season)
+    if target_track_type is None:
+        raise ValueError(
+            f"Unknown track type for {target_track_name!r} in "
+            f"{target_season}-{target_race_num}."
+        )
+
+    training_start_year = training_start_year_for_target(target_season)
+    testing = {
+        "_meta": {
+            "mode": "historical",
+            "race": {
+                "season": target_season,
+                "race_num": target_race_num,
+                "track_name": target_track_name,
+                "track_type": target_track_type,
+            },
+            "qualifying_available": True,
+            "training_cutoff": {
+                "before_season": target_season,
+                "before_race_num": target_race_num,
+            },
+            "training_window": {
+                "window_years": None,
+                "start_year": training_start_year,
+                "end_before": _race_key_str(target_key),
+            },
+        }
+    }
+
+    skipped = []
+    for driver, stats in target_drivers.items():
+        car_num = str(stats.get("car_num", "")).strip()
+        if not car_num:
+            continue
+
+        history = _recent_active_driver_history(
+            driver_history.get(driver, []), target_season
+        )
+        (
+            padded_history,
+            team_fill_count,
+            neutral_fill_count,
+            canonical_team,
+            driver_avg_fill_count,
+            start_fill_count,
+        ) = _history_with_team_padding(
+            history,
+            stats.get("team", ""),
+            team_history,
+            track_type=target_track_type,
+            min_len=10,
+            start_pos=stats.get("start"),
+        )
+        feats = build_features(
+            padded_history, target_track_type=target_track_type,
+            start_pos=stats.get("start"), min_history=0
+        )
+        if feats is None:
+            skipped.append(driver)
+            continue
+
+        history_count = len(history)
+        testing[car_num] = {
+            "driver_name": driver,
+            "history_driver_name": driver,
+            "manufacturer": stats.get("manufacturer", ""),
+            "team": stats.get("team", ""),
+            "canonical_team": canonical_team,
+            "features": feats,
+            "history_count": history_count,
+            "model_history_count": len(padded_history),
+            "team_history_fill_count": team_fill_count,
+            "neutral_history_fill_count": neutral_fill_count,
+            "driver_avg_fill_count": driver_avg_fill_count,
+            "start_pos_fill_count": start_fill_count,
+            "limited_history": history_count < 10,
+            "track_type": target_track_type,
+            "actual_finish": stats.get("finish"),
+        }
+
+    if skipped:
+        print(
+            f"  Historical {target_season}-{target_race_num}: skipped "
+            f"{len(skipped)} drivers because features could not be built.",
+            flush=True,
+        )
+    return testing
+
+
+def build_datasets_for_season(raw, target_season):
+    """
+    Build no-lookahead datasets for every completed race in one season.
+
+    The raw race history is traversed only once. Each race's testing features
+    are captured before that race is added to driver/team history, while its
+    training rows are then appended for use by later races.
+
+    Returns a list of (race_num, training_rows, testing) tuples.
+    """
+    target_season = int(target_season)
+    race_keys = sorted(raw.keys())
+    target_keys = [key for key in race_keys if key[0] == target_season]
+    if not target_keys:
+        raise ValueError(f"No completed races found for season {target_season}.")
+
+    earliest_training_year = training_start_year_for_target(target_season)
+    driver_history = {}
+    team_history = {}
+
+    # Keep the season alongside each row while accumulating all training data from 2005 onward.
+    accumulated_training = []
+    outputs = []
+
+    for key in race_keys:
+        season, race_num = key
+        if season > target_season:
+            break
+
+        track_name, drivers = raw[key]
+        track_type = get_track_type(track_name, season)
+        if track_type is None:
+            continue
+
+        if season == target_season:
+            testing = _build_historical_testing_from_state(
+                season,
+                race_num,
+                track_name,
+                drivers,
+                driver_history,
+                team_history,
+            )
+            training_rows = [row for _, row in accumulated_training]
+            outputs.append((race_num, training_rows, testing))
+
+        # Build this race's training observations using only pre-race history,
+        # then add the actual race to histories for the following target.
+        if season >= earliest_training_year:
+            for driver, stats in drivers.items():
+                history = driver_history.get(driver, [])
+                padded_history, *_ = _history_with_team_padding(
+                    history,
+                    stats.get("team", ""),
+                    team_history,
+                    track_type=track_type,
+                    min_len=10,
+                    start_pos=stats.get("start"),
+                )
+                feats = build_features(
+                    padded_history, target_track_type=track_type,
+                    start_pos=stats.get("start"), min_history=0
+                )
+                accumulated_training.append(
+                    (season, (feats, stats["finish"], track_type))
+                )
+
+        for driver, stats in drivers.items():
+            row = _history_row(stats, track_type, season, driver=driver)
+            driver_history.setdefault(driver, []).append(row)
+            canonical_team = row.get("canonical_team", "")
+            if canonical_team:
+                team_history.setdefault(canonical_team, []).append(row)
+
+    return outputs
 
 
 def load_raw_cache(path="raw_races_cache.json"):
@@ -1273,6 +1963,38 @@ def load_raw_cache(path="raw_races_cache.json"):
     return raw
 
 
+
+def backfill_missing_lap_metrics(raw):
+    """Re-scrape cached races once when the new lap-percentage fields are absent."""
+    missing_keys = []
+    for key, (_, drivers) in raw.items():
+        if not drivers:
+            continue
+        if any("pct_laps_led" not in stats for stats in drivers.values()):
+            missing_keys.append(key)
+
+    if not missing_keys:
+        return raw, 0
+
+    print(
+        f"  Backfilling lap-percentage metrics for {len(missing_keys)} cached races "
+        f"(one-time upgrade)...",
+        flush=True,
+    )
+    updated = 0
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = {ex.submit(fetch_race, season, race_num): (season, race_num)
+                   for season, race_num in missing_keys}
+        for done, fut in enumerate(as_completed(futures), 1):
+            result = fut.result()
+            if result is not None:
+                season, race_num, track, drivers = result
+                raw[(season, race_num)] = (track, drivers)
+                updated += 1
+            if done % 20 == 0 or done == len(missing_keys):
+                print(f"    Lap metrics checked {done}/{len(missing_keys)}; updated {updated} races...", flush=True)
+    return raw, updated
+
 def scrape_incremental(cache_path="raw_races_cache.json"):
     """
     Load cache, then walk forward one race at a time from the last cached
@@ -1284,10 +2006,20 @@ def scrape_incremental(cache_path="raw_races_cache.json"):
     raw = load_raw_cache(cache_path)
 
     if not raw:
-        print("  No cache — full scrape (one-time, ~30-60 s)...")
+        print("  No cache — full scrape (one-time, more if backfilling to 2005)...")
         raw = scrape_all()
         save_raw_cache(raw, cache_path)
         return raw
+
+    raw, backfill_count = backfill_missing_early_races(raw)
+    if backfill_count:
+        print(f"  Backfilled {backfill_count} older race(s). Saving cache.", flush=True)
+        save_raw_cache(raw, cache_path)
+
+    raw, lap_metric_count = backfill_missing_lap_metrics(raw)
+    if lap_metric_count:
+        print(f"  Added lap-percentage metrics to {lap_metric_count} cached race(s). Saving cache.", flush=True)
+        save_raw_cache(raw, cache_path)
 
     last_season, last_race = max(raw.keys())
     print(f"  Cache: {len(raw)} completed races. Last: {last_season} race {last_race}.", flush=True)
@@ -1340,7 +2072,7 @@ def save_raw_cache(raw, path="raw_races_cache.json"):
 # Main
 # ---------------------------------------------------------------------------
 def write_training_csv(path, rows):
-    feature_count = len(rows[0][0]) if rows else 145
+    feature_count = len(rows[0][0]) if rows else 133
     feature_cols  = [f"x{i}" for i in range(feature_count)]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)

@@ -13,24 +13,64 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 TRACKS = ["s", "ss", "rc"]
 TRACK_LABELS = {"s": "Speedway", "ss": "Superspeedway", "rc": "Road Course"}
 
-MAX_FINISH = 40
+# Fallback only. Normal prediction jobs use the actual target field size
+# (number of cars in the race being predicted).
+DEFAULT_FIELD_SIZE = 40
+
+
+def _cars_in_testing(testing):
+    return [k for k in testing.keys() if not str(k).startswith("_")]
+
+
+def get_target_field_size(testing):
+    """Return the number of possible finishing positions for this prediction job.
+
+    Prefer explicit metadata when present, otherwise use the number of target
+    cars. For completed historical/last-race jobs, also consider the max actual
+    finish as a safety check in case a testing file is missing a car row.
+    """
+    meta = testing.get("_meta", {}) if isinstance(testing, dict) else {}
+
+    for key in ("field_size", "target_field_size", "num_cars", "entry_count"):
+        try:
+            value = int(meta.get(key))
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+
+    cars = _cars_in_testing(testing)
+    field_size = len(cars)
+
+    max_actual = 0
+    for car in cars:
+        try:
+            actual = testing[car].get("actual_finish")
+            if actual is not None:
+                max_actual = max(max_actual, int(actual))
+        except (AttributeError, TypeError, ValueError):
+            pass
+
+    field_size = max(field_size, max_actual)
+    return field_size if field_size > 0 else DEFAULT_FIELD_SIZE
 
 MODEL_PARAMS = dict(
-    solver="saga",
+    # lbfgs is substantially faster than saga for dense, L2-regularized
+    # multinomial logistic regression like this dataset.
+    solver="lbfgs",
     penalty="l2",
-    C=0.02,
-    max_iter=5000,
-    tol=1e-4,
+    C=0.01,
+    max_iter=1000,
+    tol=1e-3,
     random_state=1,
-    n_jobs=-1,
 )
 
 
 def clean_feature_array(x):
-    return np.nan_to_num(x, nan=20.0, posinf=40.0, neginf=1.0)
+    return np.nan_to_num(x, nan=20.0, posinf=float(DEFAULT_FIELD_SIZE), neginf=1.0)
 
 
-def load_training(path):
+def load_training(path, target_field_size=None):
     rows = []
     track_types = []
 
@@ -57,7 +97,8 @@ def load_training(path):
     data = np.array(rows, dtype=float)
     X    = clean_feature_array(data[:, :-1])
     y    = data[:, -1].astype(int)
-    y    = np.clip(y, 1, MAX_FINISH)
+    field_size = int(target_field_size or DEFAULT_FIELD_SIZE)
+    y    = np.clip(y, 1, field_size)
     return X, y, np.array(track_types)
 
 
@@ -138,13 +179,14 @@ def train_models(X, y, track_types, track_types_to_train=None):
     return models
 
 
-def predict_pmf(model, x):
+def predict_pmf(model, x, field_size):
     probs   = model.predict_proba(x.reshape(1, -1))[0]
     classes = model.named_steps["logisticregression"].classes_
 
-    pmf = np.zeros(MAX_FINISH)
+    field_size = int(field_size or DEFAULT_FIELD_SIZE)
+    pmf = np.zeros(field_size)
     for cls, p in zip(classes, probs):
-        if 1 <= cls <= MAX_FINISH:
+        if 1 <= cls <= field_size:
             pmf[cls - 1] = p
 
     total = pmf.sum()
@@ -155,16 +197,111 @@ def predict_pmf(model, x):
     return pmf, cdf
 
 
-def summarize_driver(car, driver_info, track_type, pmf, cdf):
-    positions = np.arange(1, MAX_FINISH + 1)
+
+def balance_field_pmfs(pmf_matrix, max_iter=500, tol=1e-10):
+    """Sinkhorn-balance a square driver-by-position PMF matrix."""
+    matrix = np.asarray(pmf_matrix, dtype=float).copy()
+    if matrix.ndim != 2:
+        raise ValueError("pmf_matrix must be two-dimensional")
+
+    n_drivers, n_positions = matrix.shape
+    if n_drivers != n_positions:
+        # A coherent one-driver-per-position matrix requires a square field.
+        # Leave the model PMFs alone rather than applying an invalid balance.
+        matrix /= np.maximum(matrix.sum(axis=1, keepdims=True), 1e-15)
+        return matrix
+
+    matrix = np.maximum(matrix, 1e-15)
+    for _ in range(max_iter):
+        matrix /= np.maximum(matrix.sum(axis=1, keepdims=True), 1e-15)
+        matrix /= np.maximum(matrix.sum(axis=0, keepdims=True), 1e-15)
+
+        row_error = np.max(np.abs(matrix.sum(axis=1) - 1.0))
+        col_error = np.max(np.abs(matrix.sum(axis=0) - 1.0))
+        if max(row_error, col_error) < tol:
+            break
+
+    matrix /= np.maximum(matrix.sum(axis=1, keepdims=True), 1e-15)
+    return matrix
+
+
+def predict_pmfs_batch(model, feature_matrix, field_size):
+    """Predict every driver's PMF in one model call, then field-balance it."""
+    probs = model.predict_proba(feature_matrix)
+    classes = model.named_steps["logisticregression"].classes_
+
+    pmfs = np.zeros((len(feature_matrix), int(field_size)), dtype=float)
+    for class_index, finish_class in enumerate(classes):
+        finish_class = int(finish_class)
+        if 1 <= finish_class <= field_size:
+            pmfs[:, finish_class - 1] = probs[:, class_index]
+
+    pmfs /= np.maximum(pmfs.sum(axis=1, keepdims=True), 1e-15)
+    return balance_field_pmfs(pmfs)
+
+def summarize_driver(car, driver_info, track_type, pmf, cdf, field_size):
+    field_size = int(field_size or len(pmf) or DEFAULT_FIELD_SIZE)
+    positions = np.arange(1, field_size + 1)
 
     expected    = float(np.sum(positions * pmf))
     median      = float(np.searchsorted(cdf, 0.5) + 1)
     driver_name = driver_info.get("driver_name", f"#{car}")
 
-    raw_start = None
-    if driver_info.get("features"):
-        raw_start = driver_info["features"][-1]
+    features = driver_info.get("features") or []
+
+    def feature_value(index):
+        """Return a clean numeric feature value, or None if unavailable."""
+        try:
+            if index < 0 or index >= len(features):
+                return None
+            value = float(features[index])
+            if np.isfinite(value):
+                return value
+        except (TypeError, ValueError):
+            pass
+        return None
+
+    # Keep these names synchronized with getdata.METRICS. Each metric has
+    # performance-oriented p10/p25/p50 slots, and each overall window is
+    # one complete metric block. Historical starting position is now included
+    # just like finish and average running position; the final feature remains
+    # the current race's actual/fallback starting position.
+    metric_order = [
+        "finish", "start", "mid_pos", "closer_pos", "high_pos", "low_pos",
+        "avg_pos", "pct_laps_completed", "pct_fastest_laps",
+        "pct_laps_top15", "pct_laps_led",
+    ]
+    percentiles_per_metric = 3
+    metric_block_size = len(metric_order) * percentiles_per_metric
+
+    def overall_p50(window_index, metric):
+        return feature_value(window_index * metric_block_size + metric_order.index(metric) * percentiles_per_metric + 2)
+
+    baselines = {
+        "last10_median_finish": overall_p50(0, "finish"),
+        "last20_median_finish": overall_p50(1, "finish"),
+        "last36_median_finish": overall_p50(2, "finish"),
+        "last10_median_start": overall_p50(0, "start"),
+        "last20_median_start": overall_p50(1, "start"),
+        "last36_median_start": overall_p50(2, "start"),
+        "last10_median_avg_pos": overall_p50(0, "avg_pos"),
+        "last20_median_avg_pos": overall_p50(1, "avg_pos"),
+        "last36_median_avg_pos": overall_p50(2, "avg_pos"),
+        "last10_median_laps_completed": overall_p50(0, "pct_laps_completed"),
+        "last20_median_laps_completed": overall_p50(1, "pct_laps_completed"),
+        "last36_median_laps_completed": overall_p50(2, "pct_laps_completed"),
+        "last10_median_fastest_laps": overall_p50(0, "pct_fastest_laps"),
+        "last20_median_fastest_laps": overall_p50(1, "pct_fastest_laps"),
+        "last36_median_fastest_laps": overall_p50(2, "pct_fastest_laps"),
+        "last10_median_laps_top15": overall_p50(0, "pct_laps_top15"),
+        "last20_median_laps_top15": overall_p50(1, "pct_laps_top15"),
+        "last36_median_laps_top15": overall_p50(2, "pct_laps_top15"),
+        "last10_median_laps_led": overall_p50(0, "pct_laps_led"),
+        "last20_median_laps_led": overall_p50(1, "pct_laps_led"),
+        "last36_median_laps_led": overall_p50(2, "pct_laps_led"),
+    }
+
+    raw_start = features[-1] if features else None
 
     starting_position = None
     try:
@@ -173,6 +310,43 @@ def summarize_driver(car, driver_info, track_type, pmf, cdf):
     except (TypeError, ValueError):
         starting_position = None
 
+    baselines["starting_position"] = float(starting_position) if starting_position is not None else None
+    baseline_last10_p50_finish = baselines["last10_median_finish"]
+
+    history_count = driver_info.get("history_count")
+    try:
+        history_count = int(history_count)
+    except (TypeError, ValueError):
+        history_count = None
+
+    def clean_int_field(key):
+        try:
+            value = driver_info.get(key)
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    model_history_count = clean_int_field("model_history_count")
+    team_history_fill_count = clean_int_field("team_history_fill_count")
+    neutral_history_fill_count = clean_int_field("neutral_history_fill_count")
+
+    limited_history = bool(driver_info.get("limited_history"))
+    if history_count is not None:
+        limited_history = history_count < 10
+
+    def cdf_at(cdf_values, finish_pos):
+        """Probability of finishing at or better than finish_pos.
+
+        If the requested threshold is larger than the field size, it is a
+        guaranteed event. Example: top25 in a 20-car race is 100%.
+        """
+        if len(cdf_values) == 0:
+            return 0.0
+        idx = min(max(int(finish_pos), 1), field_size) - 1
+        return float(cdf_values[idx])
+
     return {
         "car":                 car,
         "name":                driver_name,
@@ -180,22 +354,32 @@ def summarize_driver(car, driver_info, track_type, pmf, cdf):
         "history_driver_name": driver_info.get("history_driver_name", driver_name),
         "manufacturer":        driver_info.get("manufacturer", ""),
         "team":                driver_info.get("team", ""),
+        "canonical_team":      driver_info.get("canonical_team", ""),
         "track_type":          track_type,
         "track_label":         TRACK_LABELS[track_type],
 
         "starting_position": starting_position,
         "actual_finish": driver_info.get("actual_finish"),
+        "history_count": history_count,
+        "model_history_count": model_history_count,
+        "team_history_fill_count": team_history_fill_count,
+        "neutral_history_fill_count": neutral_history_fill_count,
+        "limited_history": limited_history,
+        "baseline_last10_p50_finish": baseline_last10_p50_finish,
+        "baselines": baselines,
 
         "expected_finish": expected,
         "median_finish":   median,
 
-        "win":   float(cdf[0]),
-        "top3":  float(cdf[2]),
-        "top5":  float(cdf[4]),
-        "top10": float(cdf[9]),
-        "top15": float(cdf[14]),
-        "top20": float(cdf[19]),
-        "top25": float(cdf[24]),
+        "field_size": field_size,
+
+        "win":   cdf_at(cdf, 1),
+        "top3":  cdf_at(cdf, 3),
+        "top5":  cdf_at(cdf, 5),
+        "top10": cdf_at(cdf, 10),
+        "top15": cdf_at(cdf, 15),
+        "top20": cdf_at(cdf, 20),
+        "top25": cdf_at(cdf, 25),
 
         "pmf": pmf.tolist(),
         "cdf": cdf.tolist(),
@@ -208,78 +392,62 @@ def car_sort_key(z):
 
 
 def predict_field(models, testing, mode_meta):
-    """
-    Run predictions for all drivers in a testing dict.
-
-    For last_race mode: each driver has a single "features" vector and a
-    known "track_type", so we only run the matching model.
-
-    For next_race mode: if getdata.py knows the target track type, we only
-    run that matching model. If it does not, we fall back to all three buckets.
-    """
+    """Run batched, field-balanced predictions for all target drivers."""
     mode = mode_meta.get("mode", "next_race")
-    cars = [k for k in testing.keys() if not str(k).startswith("_")]
+    cars = sorted(_cars_in_testing(testing), key=car_sort_key)
+    field_size = get_target_field_size(testing)
+
+    # A complete target field should have one possible position per driver.
+    # Prefer the actual target rows if stale metadata disagrees.
+    if cars and field_size != len(cars):
+        print(
+            f"  WARNING: metadata field size {field_size} != {len(cars)} target cars; "
+            f"using {len(cars)} for coherent field probabilities.",
+            flush=True,
+        )
+        field_size = len(cars)
 
     output = {
         "meta": {
-            "model":      "regularized multinomial logistic regression",
-            "max_finish": MAX_FINISH,
-            "tracks":     TRACK_LABELS,
-            "params":     MODEL_PARAMS,
-            "mode_meta":  mode_meta,
+            "model": "fast regularized multinomial logistic regression + Sinkhorn",
+            "field_size": field_size,
+            "max_finish": field_size,
+            "tracks": TRACK_LABELS,
+            "params": MODEL_PARAMS,
+            "mode_meta": mode_meta,
         },
         "tracks": {},
     }
 
     if mode in {"last_race", "historical"}:
-        # Single known track type — populate just that track bucket
-        track_type = mode_meta.get("race", {}).get("track_type")
-        if track_type not in TRACKS:
-            raise ValueError(f"Unknown track_type in {mode} meta: {track_type!r}")
-
-        output["tracks"][track_type] = {}
-
-        for car in sorted(cars, key=car_sort_key):
-            driver_info = testing[car]
-            x = clean_feature_array(np.array(driver_info["features"], dtype=float))
-            pmf, cdf = predict_pmf(models[track_type], x)
-            output["tracks"][track_type][car] = summarize_driver(car, driver_info, track_type, pmf, cdf)
-
-        print(f"  Predicted {len(cars)} drivers for {TRACK_LABELS[track_type]}.", flush=True)
-
+        track_types_to_predict = [mode_meta.get("race", {}).get("track_type")]
     else:
-        # next_race: if getdata.py determined the actual next track type,
-        # predict only that bucket. This makes the dashboard open on the
-        # correct track automatically instead of defaulting to Speedway.
         target_track_type = mode_meta.get("target_race", {}).get("track_type")
+        track_types_to_predict = [target_track_type] if target_track_type in TRACKS else list(TRACKS)
 
-        if target_track_type in TRACKS:
-            track_types_to_predict = [target_track_type]
-            print(
-                f"  Next race track type known: {TRACK_LABELS[target_track_type]}",
-                flush=True,
+    for tt in track_types_to_predict:
+        if tt not in TRACKS:
+            raise ValueError(f"Unknown track type: {tt!r}")
+
+        print(f"  Predicting {TRACK_LABELS[tt]} in one batch...", flush=True)
+        features = clean_feature_array(np.asarray([testing[car]["features"] for car in cars], dtype=float))
+        pmfs = predict_pmfs_batch(models[tt], features, field_size)
+
+        output["tracks"][tt] = {}
+        for car, pmf in zip(cars, pmfs):
+            cdf = np.cumsum(pmf)
+            output["tracks"][tt][car] = summarize_driver(
+                car, testing[car], tt, pmf, cdf, field_size
             )
-        else:
-            # Fallback for older testing_next_race.json files that do not yet
-            # include target_race.track_type. Keep the old behavior.
-            track_types_to_predict = TRACKS
-            print(
-                "  Next race track type unknown; predicting all track buckets.",
-                flush=True,
-            )
 
-        for tt in track_types_to_predict:
-            print(f"  Predicting {TRACK_LABELS[tt]}...", flush=True)
-            output["tracks"][tt] = {}
-
-            for car in sorted(cars, key=car_sort_key):
-                driver_info = testing[car]
-                x = clean_feature_array(np.array(driver_info["features"], dtype=float))
-                pmf, cdf = predict_pmf(models[tt], x)
-                output["tracks"][tt][car] = summarize_driver(car, driver_info, tt, pmf, cdf)
+        win_total = sum(d["win"] for d in output["tracks"][tt].values())
+        print(
+            f"  Predicted {len(cars)} drivers for {TRACK_LABELS[tt]}; "
+            f"field win total={win_total:.6f}.",
+            flush=True,
+        )
 
     return output
-
 
 def write_predictions(input_training, input_testing, output_path):
     with open(input_testing) as f:
@@ -288,7 +456,8 @@ def write_predictions(input_training, input_testing, output_path):
     meta = testing.get("_meta", {})
     required_tracks = get_required_track_types(meta)
 
-    X, y, tt = load_training(input_training)
+    field_size = get_target_field_size(testing)
+    X, y, tt = load_training(input_training, field_size)
     models = train_models(X, y, tt, required_tracks)
 
     preds = predict_field(models, testing, meta)
@@ -298,6 +467,11 @@ def write_predictions(input_training, input_testing, output_path):
     print(f"Wrote {output_path}", flush=True)
     return preds
 
+
+HISTORICAL_DIR = Path("predictions_historical")
+
+def historical_output_path(year, race_num):
+    return HISTORICAL_DIR / str(int(year)) / f"predictions_historical_{int(year)}_{int(race_num):02d}.json"
 
 def update_historical_index(preds, filename):
     mm = preds.get("meta", {}).get("mode_meta", {})
@@ -319,7 +493,7 @@ def update_historical_index(preds, filename):
         "race_num": race.get("race_num"),
         "track_name": race.get("track_name"),
         "track_type": race.get("track_type"),
-        "file": filename,
+        "file": Path(filename).as_posix(),
     }
 
     index = [e for e in index if not (e.get("season") == entry["season"] and e.get("race_num") == entry["race_num"])]
@@ -330,7 +504,7 @@ def update_historical_index(preds, filename):
 
 
 
-def rows_to_arrays(rows):
+def rows_to_arrays(rows, target_field_size=None):
     if not rows:
         raise ValueError("No usable training rows were built.")
     X = []
@@ -341,7 +515,8 @@ def rows_to_arrays(rows):
         y.append(finish)
         track_types.append(track_type)
     X = clean_feature_array(np.array(X, dtype=float))
-    y = np.clip(np.array(y, dtype=int), 1, MAX_FINISH)
+    field_size = int(target_field_size or DEFAULT_FIELD_SIZE)
+    y = np.clip(np.array(y, dtype=int), 1, field_size)
     return X, y, np.array(track_types)
 
 
@@ -349,7 +524,8 @@ def write_predictions_from_rows(training_rows, testing, output_path):
     meta = testing.get("_meta", {})
     required_tracks = get_required_track_types(meta)
 
-    X, y, tt = rows_to_arrays(training_rows)
+    field_size = get_target_field_size(testing)
+    X, y, tt = rows_to_arrays(training_rows, field_size)
     models = train_models(X, y, tt, required_tracks)
 
     preds = predict_field(models, testing, meta)
@@ -374,18 +550,84 @@ def load_raw_cache(path="raw_races_cache.json"):
 
 
 def run_historical_from_cache(year, race_num):
-    print(f"=== Historical predictions: {year} race {race_num} ===", flush=True)
-    print("Reading raw_races_cache.json only. No scraping. No getdata.", flush=True)
-    from getdata import build_datasets_for_race
+    """Generate every missing historical prediction in the selected season."""
+    year = int(year)
+    race_num = int(race_num)
+    print(
+        f"=== Historical season batch: {year} "
+        f"(requested race {race_num}) ===",
+        flush=True,
+    )
+    print(
+        "Reading raw_races_cache.json and building the season in one "
+        "chronological no-lookahead pass.",
+        flush=True,
+    )
+    from getdata import build_datasets_for_season, fetch_race, save_raw_cache
 
     raw = load_raw_cache()
-    training_rows, testing = build_datasets_for_race(raw, int(year), int(race_num))
-    print(f"Built {len(training_rows)} no-lookahead training rows.", flush=True)
+    target_key = (year, race_num)
+    if target_key not in raw:
+        raise ValueError(f"Race {year}-{race_num} was not found in raw cache.")
 
-    output = f"predictions_historical_{int(year)}_{int(race_num):02d}.json"
-    preds = write_predictions_from_rows(training_rows, testing, output)
-    update_historical_index(preds, output)
-    return output
+    # Preserve the old safety repair for the race the user explicitly selected.
+    cached = raw.get(target_key)
+    cached_count = (
+        len(cached[1])
+        if cached and len(cached) > 1 and isinstance(cached[1], dict)
+        else 0
+    )
+    if 0 < cached_count < 36:
+        print(
+            f"  Cached requested race has only {cached_count} drivers; "
+            "re-fetching it once with the loop-data fallback parser.",
+            flush=True,
+        )
+        repaired = fetch_race(year, race_num)
+        if repaired is not None:
+            _, _, track_name, drivers = repaired
+            if len(drivers) > cached_count:
+                raw[target_key] = (track_name, drivers)
+                save_raw_cache(raw)
+                print(
+                    f"  Repaired requested race to {len(drivers)} drivers "
+                    "and saved raw cache.",
+                    flush=True,
+                )
+
+    season_jobs = build_datasets_for_season(raw, year)
+    requested_output = historical_output_path(year, race_num)
+    generated = 0
+    skipped = 0
+
+    for current_race, training_rows, testing in season_jobs:
+        output = historical_output_path(year, current_race)
+        if output.exists():
+            skipped += 1
+            print(f"  Race {current_race:02d}: already cached; skipping.", flush=True)
+            continue
+
+        print(
+            f"\n--- {year} race {current_race:02d}: "
+            f"{len(training_rows)} no-lookahead training rows ---",
+            flush=True,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        preds = write_predictions_from_rows(training_rows, testing, output)
+        update_historical_index(preds, output)
+        generated += 1
+
+    if not requested_output.exists():
+        raise RuntimeError(
+            f"Season batch completed but did not create {requested_output}."
+        )
+
+    print(
+        f"\nSeason {year} complete: generated {generated}, "
+        f"reused {skipped} cached prediction file(s).",
+        flush=True,
+    )
+    return str(requested_output.as_posix())
 
 
 def main():
@@ -395,7 +637,7 @@ def main():
         nargs=2,
         metavar=("YEAR", "RACE_NUM"),
         type=int,
-        help="Build and predict one historical race from raw_races_cache.json only. Does not scrape.",
+        help="Build all missing historical predictions for the selected season in one pass.",
     )
     args = parser.parse_args()
 

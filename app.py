@@ -17,6 +17,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 APP_DIR        = Path(__file__).resolve().parent
 RAW_CACHE_FILE = APP_DIR / "raw_races_cache.json"
+HISTORICAL_DIR = APP_DIR / "predictions_historical"
 
 app = Flask(__name__, static_folder=None)
 
@@ -37,22 +38,150 @@ def _get_track_type(track_name: str, season: int) -> str:
     except Exception:
         return "s"
 
+def _historical_relpath(season: int, race_num: int) -> Path:
+    return Path("predictions_historical") / str(int(season)) / f"predictions_historical_{int(season)}_{int(race_num):02d}.json"
+
+def _historical_abspath(season: int, race_num: int) -> Path:
+    return APP_DIR / _historical_relpath(season, race_num)
+
+def _migrate_legacy_historical_file(season: int, race_num: int) -> Path:
+    destination = _historical_abspath(season, race_num)
+    legacy = APP_DIR / f"predictions_historical_{int(season)}_{int(race_num):02d}.json"
+    if not destination.exists() and legacy.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        legacy.replace(destination)
+        print(f"Moved {legacy.name} -> {destination.relative_to(APP_DIR)}", flush=True)
+    return destination
+
 def _build_historical_index() -> list[dict[str, Any]]:
     raw = _load_raw_cache()
     out = []
     for (season, race_num), (track_name, _) in sorted(raw.items()):
-        if season < 2022:
+        # Historical predictions are available from 2010 onward.
+        # Raw data starts in 2005, and every historical prediction trains on
+        # all available prior races from 2005 onward.
+        if season < 2010:
             continue
-        fname = f"predictions_historical_{season}_{race_num:02d}.json"
+        prediction_path = _migrate_legacy_historical_file(season, race_num)
+        relpath = _historical_relpath(season, race_num).as_posix()
         out.append({
             "season":     season,
             "race_num":   race_num,
             "track_name": track_name,
             "track_type": _get_track_type(track_name, season),
-            "file":       fname,
-            "predicted":  (APP_DIR / fname).exists(),
+            "file":       relpath,
+            "predicted":  prediction_path.exists(),
         })
     return out
+
+_COMPARISON_METHODS = [
+    ("Tyler", "expected_finish", None),
+    ("Start Pos", "starting_position", None),
+    ("Last 10 Finish", "last10_median_finish", "baseline_last10_p50_finish"),
+    ("Last 20 Finish", "last20_median_finish", None),
+    ("Last 36 Finish", "last36_median_finish", None),
+    ("Last 10 Avg Pos", "last10_median_avg_pos", None),
+    ("Last 20 Avg Pos", "last20_median_avg_pos", None),
+    ("Last 36 Avg Pos", "last36_median_avg_pos", None),
+]
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+        return number if number == number and abs(number) != float("inf") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _comparison_value(driver: dict[str, Any], key: str) -> float | None:
+    if key in {"expected_finish", "median_finish", "baseline_last10_p50_finish", "starting_position"}:
+        return _finite_number(driver.get(key))
+    return _finite_number((driver.get("baselines") or {}).get(key))
+
+
+def _score_prediction_file(payload: dict[str, Any]) -> dict[str, float]:
+    tracks = payload.get("tracks") or {}
+    if not tracks:
+        return {}
+    drivers_by_car = next(iter(tracks.values()), {}) or {}
+    drivers = [
+        d for d in drivers_by_car.values()
+        if _finite_number(d.get("actual_finish")) is not None
+    ]
+    if len(drivers) < 5:
+        return {}
+
+    scores: dict[str, float] = {}
+
+    # Expected MAE for a completely random ordering of this race's field.
+    # This is deterministic for field size n: (n² - 1) / (3n).
+    random_n = len(drivers)
+    if random_n >= 2:
+        scores["Random"] = (random_n * random_n - 1) / (3 * random_n)
+
+    for name, key, fallback in _COMPARISON_METHODS:
+        valued = []
+        for driver in drivers:
+            value = _comparison_value(driver, key)
+            if value is None and fallback:
+                value = _comparison_value(driver, fallback)
+            if value is not None:
+                valued.append((driver, value))
+        if len(valued) < 5:
+            continue
+
+        valued.sort(key=lambda item: (
+            item[1],
+            _comparison_value(item[0], "expected_finish") or float("inf"),
+            int(item[0].get("car")) if str(item[0].get("car", "")).isdigit() else 9999,
+            str(item[0].get("car", "")),
+        ))
+        ranks = {str(driver.get("car")): i + 1 for i, (driver, _) in enumerate(valued)}
+        error = sum(
+            abs(float(driver["actual_finish"]) - ranks[str(driver.get("car"))])
+            for driver, _ in valued
+        ) / len(valued)
+        scores[name] = error
+    return scores
+
+
+def _season_comparison(season: int) -> dict[str, Any]:
+    files_by_race: dict[int, Path] = {}
+    season_dir = HISTORICAL_DIR / str(int(season))
+    if season_dir.exists():
+        for path in season_dir.glob(f"predictions_historical_{int(season)}_*.json"):
+            match = path.stem.rsplit("_", 1)[-1]
+            if match.isdigit():
+                files_by_race[int(match)] = path
+
+    last_race_path = APP_DIR / "predictions_last_race.json"
+    if last_race_path.exists():
+        try:
+            payload = json.loads(last_race_path.read_text())
+            race = ((payload.get("meta") or {}).get("mode_meta") or {}).get("race") or {}
+            if int(race.get("season", -1)) == int(season):
+                files_by_race.setdefault(int(race.get("race_num")), last_race_path)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for race_num, path in sorted(files_by_race.items()):
+        try:
+            scores = _score_prediction_file(json.loads(path.read_text()))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for name, score in scores.items():
+            totals[name] = totals.get(name, 0.0) + score
+            counts[name] = counts.get(name, 0) + 1
+
+    return {
+        "season": int(season),
+        "averages": {name: totals[name] / counts[name] for name in totals},
+        "race_counts": counts,
+    }
+
 
 def _run(cmd: list[str], timeout: int = 600) -> dict[str, Any]:
     """Run a subprocess, streaming its output live to the terminal."""
@@ -139,6 +268,10 @@ def api_status():
 def api_historical_index():
     return jsonify(_build_historical_index())
 
+@app.get("/api/season_comparison/<int:season>")
+def api_season_comparison(season: int):
+    return jsonify(_season_comparison(season))
+
 @app.post("/api/scrape")
 def api_scrape():
     """
@@ -173,8 +306,8 @@ def api_scrape():
 @app.post("/api/run_historical")
 def api_run_historical():
     """
-    Build a no-lookahead prediction for a specific past race.
-    Reads only from raw_races_cache.json — no scraping.
+    Build all missing no-lookahead predictions for the selected season.
+    The requested race is returned after the seasonal batch finishes.
     """
     payload = request.get_json(silent=True) or {}
     try:
@@ -197,10 +330,11 @@ def api_run_historical():
             "error": f"Race {year} #{race} not found in cache. Try ↻ Refresh data first.",
         }), 404
 
-    out_file = f"predictions_historical_{year}_{race:02d}.json"
+    out_path = _migrate_legacy_historical_file(year, race)
+    out_file = _historical_relpath(year, race).as_posix()
 
     # Already predicted — return immediately
-    if (APP_DIR / out_file).exists():
+    if out_path.exists():
         return jsonify({
             "ok":     True,
             "file":   out_file,
@@ -209,7 +343,7 @@ def api_run_historical():
         })
 
     r = _run([sys.executable, "predict.py", "--historical", str(year), str(race)],
-             timeout=600)
+             timeout=3600)
     if not r["ok"]:
         return jsonify({
             "ok":     False,
