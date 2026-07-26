@@ -16,18 +16,30 @@ from typing import Any
 from flask import Flask, jsonify, request, send_from_directory
 
 APP_DIR        = Path(__file__).resolve().parent
-RAW_CACHE_FILE = APP_DIR / "raw_races_cache.json"
-HISTORICAL_DIR = APP_DIR / "predictions_historical"
+SERIES_CONFIG = {"cup": "Cup Series", "oreilly": "O'Reilly Series"}
+
+def _series_key(value: str | None) -> str:
+    key = str(value or "cup").lower()
+    return key if key in SERIES_CONFIG else "cup"
+
+def _series_suffix(series: str) -> str:
+    return "" if series == "cup" else f"_{series}"
+
+def _raw_cache_file(series: str) -> Path:
+    return APP_DIR / f"raw_races_cache{_series_suffix(series)}.json"
+
+def _historical_dir(series: str) -> Path:
+    return APP_DIR / "predictions_historical" / series
 
 app = Flask(__name__, static_folder=None)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _load_raw_cache() -> dict:
+def _load_raw_cache(series: str = "cup") -> dict:
     try:
         from getdata import load_raw_cache
-        return load_raw_cache(str(RAW_CACHE_FILE))
+        return load_raw_cache(str(_raw_cache_file(series)))
     except Exception:
         return {}
 
@@ -38,23 +50,35 @@ def _get_track_type(track_name: str, season: int) -> str:
     except Exception:
         return "s"
 
-def _historical_relpath(season: int, race_num: int) -> Path:
-    return Path("predictions_historical") / str(int(season)) / f"predictions_historical_{int(season)}_{int(race_num):02d}.json"
+def _historical_relpath(season: int, race_num: int, series: str = "cup") -> Path:
+    return Path("predictions_historical") / series / str(int(season)) / f"predictions_historical_{int(season)}_{int(race_num):02d}.json"
 
-def _historical_abspath(season: int, race_num: int) -> Path:
-    return APP_DIR / _historical_relpath(season, race_num)
+def _historical_abspath(season: int, race_num: int, series: str = "cup") -> Path:
+    return APP_DIR / _historical_relpath(season, race_num, series)
 
-def _migrate_legacy_historical_file(season: int, race_num: int) -> Path:
-    destination = _historical_abspath(season, race_num)
-    legacy = APP_DIR / f"predictions_historical_{int(season)}_{int(race_num):02d}.json"
-    if not destination.exists() and legacy.exists():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        legacy.replace(destination)
-        print(f"Moved {legacy.name} -> {destination.relative_to(APP_DIR)}", flush=True)
+def _migrate_legacy_historical_file(season: int, race_num: int, series: str = "cup") -> Path:
+    destination = _historical_abspath(season, race_num, series)
+    legacy_candidates = []
+    if series == "cup":
+        legacy_candidates.extend([
+            APP_DIR / "predictions_historical" / str(int(season)) / f"predictions_historical_{int(season)}_{int(race_num):02d}.json",
+            APP_DIR / f"predictions_historical_{int(season)}_{int(race_num):02d}.json",
+        ])
+    else:
+        legacy_candidates.append(
+            APP_DIR / f"predictions_historical_{series}" / str(int(season)) / f"predictions_historical_{int(season)}_{int(race_num):02d}.json"
+        )
+    if not destination.exists():
+        for legacy in legacy_candidates:
+            if legacy.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                legacy.replace(destination)
+                print(f"Moved {legacy.relative_to(APP_DIR)} -> {destination.relative_to(APP_DIR)}", flush=True)
+                break
     return destination
 
-def _build_historical_index() -> list[dict[str, Any]]:
-    raw = _load_raw_cache()
+def _build_historical_index(series: str = "cup") -> list[dict[str, Any]]:
+    raw = _load_raw_cache(series)
     out = []
     for (season, race_num), (track_name, _) in sorted(raw.items()):
         # Historical predictions are available from 2010 onward.
@@ -62,8 +86,8 @@ def _build_historical_index() -> list[dict[str, Any]]:
         # all available prior races from 2005 onward.
         if season < 2010:
             continue
-        prediction_path = _migrate_legacy_historical_file(season, race_num)
-        relpath = _historical_relpath(season, race_num).as_posix()
+        prediction_path = _migrate_legacy_historical_file(season, race_num, series)
+        relpath = _historical_relpath(season, race_num, series).as_posix()
         out.append({
             "season":     season,
             "race_num":   race_num,
@@ -75,7 +99,7 @@ def _build_historical_index() -> list[dict[str, Any]]:
     return out
 
 _COMPARISON_METHODS = [
-    ("Tyler", "expected_finish", None),
+    ("Tyler", "prediction", None),
     ("Start Pos", "starting_position", None),
     ("Last 10 Finish", "last10_median_finish", "baseline_last10_p50_finish"),
     ("Last 20 Finish", "last20_median_finish", None),
@@ -95,6 +119,21 @@ def _finite_number(value: Any) -> float | None:
 
 
 def _comparison_value(driver: dict[str, Any], key: str) -> float | None:
+    if key == "prediction":
+        stored = _finite_number(driver.get("prediction"))
+        if stored is not None:
+            return stored
+        pmf = driver.get("pmf") or []
+        before = 0.0
+        for index, raw_probability in enumerate(pmf):
+            probability = _finite_number(raw_probability) or 0.0
+            after = before + probability
+            if after >= 0.5:
+                if probability <= 0:
+                    return float(index + 1)
+                return max(1.0, index + (0.5 - before) / probability)
+            before = after
+        return _finite_number(driver.get("median_finish"))
     if key in {"expected_finish", "median_finish", "baseline_last10_p50_finish", "starting_position"}:
         return _finite_number(driver.get(key))
     return _finite_number((driver.get("baselines") or {}).get(key))
@@ -146,24 +185,15 @@ def _score_prediction_file(payload: dict[str, Any]) -> dict[str, float]:
     return scores
 
 
-def _season_comparison(season: int) -> dict[str, Any]:
+def _season_comparison(season: int, series: str = "cup") -> dict[str, Any]:
     files_by_race: dict[int, Path] = {}
-    season_dir = HISTORICAL_DIR / str(int(season))
+    season_dir = _historical_dir(series) / str(int(season))
     if season_dir.exists():
         for path in season_dir.glob(f"predictions_historical_{int(season)}_*.json"):
             match = path.stem.rsplit("_", 1)[-1]
             if match.isdigit():
                 files_by_race[int(match)] = path
 
-    last_race_path = APP_DIR / "predictions_last_race.json"
-    if last_race_path.exists():
-        try:
-            payload = json.loads(last_race_path.read_text())
-            race = ((payload.get("meta") or {}).get("mode_meta") or {}).get("race") or {}
-            if int(race.get("season", -1)) == int(season):
-                files_by_race.setdefault(int(race.get("race_num")), last_race_path)
-        except (ValueError, TypeError, json.JSONDecodeError):
-            pass
 
     totals: dict[str, float] = {}
     counts: dict[str, int] = {}
@@ -207,12 +237,13 @@ def _run(cmd: list[str], timeout: int = 600) -> dict[str, Any]:
     except Exception as e:
         return {"ok": False, "stdout": "", "stderr": "", "code": -1, "error": str(e)}
 
-def _cache_age_seconds() -> float | None:
+def _cache_age_seconds(series: str = "cup") -> float | None:
     """Return seconds since cache was last written, or None if unknown."""
-    if not RAW_CACHE_FILE.exists():
+    cache_file = _raw_cache_file(series)
+    if not cache_file.exists():
         return None
     try:
-        payload  = json.loads(RAW_CACHE_FILE.read_text())
+        payload  = json.loads(cache_file.read_text())
         updated  = payload.get("updated_at", "")
         if not updated:
             return None
@@ -246,31 +277,36 @@ def static_files(filename: str):
 
 @app.get("/api/status")
 def api_status():
-    age    = _cache_age_seconds()
+    series = _series_key(request.args.get("series"))
+    cache_file = _raw_cache_file(series)
+    age    = _cache_age_seconds(series)
     count  = 0
     updated_at = None
-    if RAW_CACHE_FILE.exists():
+    if cache_file.exists():
         try:
-            payload    = json.loads(RAW_CACHE_FILE.read_text())
+            payload    = json.loads(cache_file.read_text())
             updated_at = payload.get("updated_at")
             count      = len(payload.get("races", {}))
         except Exception:
             pass
     return jsonify({
-        "cache_exists":    RAW_CACHE_FILE.exists(),
+        "series":          series,
+        "cache_exists":    cache_file.exists(),
         "cache_age_s":     age,
         "updated_at":      updated_at,
         "race_count":      count,
-        "index":           _build_historical_index(),
+        "index":           _build_historical_index(series),
     })
 
 @app.get("/api/historical_index")
 def api_historical_index():
-    return jsonify(_build_historical_index())
+    series = _series_key(request.args.get("series"))
+    return jsonify(_build_historical_index(series))
 
 @app.get("/api/season_comparison/<int:season>")
 def api_season_comparison(season: int):
-    return jsonify(_season_comparison(season))
+    series = _series_key(request.args.get("series"))
+    return jsonify(_season_comparison(season, series))
 
 @app.post("/api/scrape")
 def api_scrape():
@@ -281,26 +317,51 @@ def api_scrape():
     After the first run, getdata.py only checks ~10-20 recent race slots
     instead of all 500+, so this is fast.
     """
-    # Run getdata.py — it now uses scrape_incremental() internally
-    r1 = _run([sys.executable, "getdata.py"], timeout=600)
-    if not r1["ok"]:
+    series = _series_key(request.args.get("series"))
+
+    # Combined-series training needs both raw caches current. Refresh both
+    # caches without building datasets, then build the selected series once.
+    scrape_results = []
+    for scrape_series in (series, "oreilly" if series == "cup" else "cup"):
+        result = _run(
+            [sys.executable, "getdata.py", "--series", scrape_series, "--scrape-only"],
+            timeout=1800,
+        )
+        scrape_results.append((scrape_series, result))
+        if not result["ok"]:
+            return jsonify({
+                "ok": False,
+                "error": result.get("error", f"getdata.py failed for {scrape_series} (code {result['code']})"),
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+            }), 500
+
+    dataset_result = _run([sys.executable, "getdata.py", "--series", series], timeout=1800)
+    if not dataset_result["ok"]:
         return jsonify({
-            "ok":     False,
-            "error":  r1.get("error", f"getdata.py failed (code {r1['code']})"),
-            "stdout": r1["stdout"],
-            "stderr": r1["stderr"],
+            "ok": False,
+            "error": dataset_result.get("error", f"dataset build failed for {series} (code {dataset_result['code']})"),
+            "stdout": dataset_result["stdout"],
+            "stderr": dataset_result["stderr"],
         }), 500
 
-    # Rebuild predictions
-    r2 = _run([sys.executable, "predict.py"], timeout=300)
+    scrape_results.append((f"{series}-dataset", dataset_result))
+    combined_scrape_stdout = "".join(
+        f"\n=== {name.upper()} DATA ===\n{result['stdout']}"
+        for name, result in scrape_results
+    )
+    combined_scrape_stderr = "".join(result["stderr"] for _, result in scrape_results)
+
+    # Rebuild predictions for the series currently selected in the dashboard.
+    r2 = _run([sys.executable, "predict.py", "--series", series], timeout=300)
     return jsonify({
         "ok":            r2["ok"],
-        "scrape_stdout": r1["stdout"],
-        "scrape_stderr": r1["stderr"],
+        "scrape_stdout": combined_scrape_stdout,
+        "scrape_stderr": combined_scrape_stderr,
         "pred_stdout":   r2["stdout"],
         "pred_stderr":   r2["stderr"],
         "error":         None if r2["ok"] else f"predict.py failed (code {r2['code']})",
-        "index":         _build_historical_index(),
+        "index":         _build_historical_index(series),
     }), (200 if r2["ok"] else 500)
 
 @app.post("/api/run_historical")
@@ -310,19 +371,21 @@ def api_run_historical():
     The requested race is returned after the seasonal batch finishes.
     """
     payload = request.get_json(silent=True) or {}
+    series = _series_key(payload.get("series") or request.args.get("series"))
     try:
         year = int(payload["year"])
         race = int(payload["race"])
     except (KeyError, TypeError, ValueError):
         return jsonify({"ok": False, "error": "Provide {year, race} as integers."}), 400
 
-    if not RAW_CACHE_FILE.exists():
+    cache_file = _raw_cache_file(series)
+    if not cache_file.exists():
         return jsonify({
             "ok":    False,
-            "error": "raw_races_cache.json not found. Click ↻ Refresh data first.",
+            "error": f"{cache_file.name} not found. Click ↻ Refresh data first.",
         }), 400
 
-    index = _build_historical_index()
+    index = _build_historical_index(series)
     entry = next((e for e in index if e["season"] == year and e["race_num"] == race), None)
     if entry is None:
         return jsonify({
@@ -330,8 +393,8 @@ def api_run_historical():
             "error": f"Race {year} #{race} not found in cache. Try ↻ Refresh data first.",
         }), 404
 
-    out_path = _migrate_legacy_historical_file(year, race)
-    out_file = _historical_relpath(year, race).as_posix()
+    out_path = _migrate_legacy_historical_file(year, race, series)
+    out_file = _historical_relpath(year, race, series).as_posix()
 
     # Already predicted — return immediately
     if out_path.exists():
@@ -339,10 +402,10 @@ def api_run_historical():
             "ok":     True,
             "file":   out_file,
             "cached": True,
-            "index":  _build_historical_index(),
+            "index":  _build_historical_index(series),
         })
 
-    r = _run([sys.executable, "predict.py", "--historical", str(year), str(race)],
+    r = _run([sys.executable, "predict.py", "--series", series, "--historical", str(year), str(race)],
              timeout=3600)
     if not r["ok"]:
         return jsonify({
@@ -357,13 +420,14 @@ def api_run_historical():
         "file":   out_file,
         "cached": False,
         "stdout": r["stdout"],
-        "index":  _build_historical_index(),
+        "index":  _build_historical_index(series),
     })
 
 
 if __name__ == "__main__":
     print("NASCAR dashboard → http://localhost:5000", flush=True)
-    if not RAW_CACHE_FILE.exists():
+    cache_file = _raw_cache_file("cup")
+    if not cache_file.exists():
         print(
             "\n  NOTE: raw_races_cache.json not found.\n"
             "  Open the dashboard and click '↻ Refresh data' to build it,\n"

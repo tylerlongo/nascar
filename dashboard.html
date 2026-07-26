@@ -12,6 +12,7 @@
   --panel2: #15151f;
   --border: #222230;
   --accent: #fde725;
+  --accent-rgb: 253,231,37;
   --text: #e8e8f0;
   --muted: #555568;
   --mono: 'Space Mono', monospace;
@@ -33,25 +34,25 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
   font-family:var(--mono); font-size:10px; cursor:pointer; user-select:none; transition:.15s;
 }
 .btn:hover { border-color:var(--accent); color:var(--text); }
-.btn.active { color:var(--text); border-color:var(--accent); background:rgba(253,231,37,.08); }
+.btn.active { color:var(--text); border-color:var(--accent); background:rgba(var(--accent-rgb),.08); }
 .divider { width:1px; height:18px; background:var(--border); margin:0 3px; }
 .mode-toggle { display:inline-flex; background:#1a1a25; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
 .mode-btn { height:28px; padding:0 13px; background:transparent; border:none; color:var(--muted); font-family:var(--mono); font-size:10px; cursor:pointer; transition:.15s; }
 .mode-btn:hover { color:var(--text); }
-.mode-btn.active { background:rgba(253,231,37,.12); color:var(--accent); }
-#main { display:grid; grid-template-columns:minmax(540px, 1fr) 450px; flex:1; min-height:0; overflow:hidden; }
+.mode-btn.active { background:rgba(var(--accent-rgb),.12); color:var(--accent); }
+#main { display:grid; grid-template-columns:minmax(460px, 1fr) 430px 210px; flex:1; min-height:0; overflow:hidden; }
 #ranking-panel { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border-right:1px solid var(--border); }
 #ranking-header { padding:14px 16px 10px; border-bottom:1px solid var(--border); background:var(--panel); }
-#ranking-header h2, #side h2 { font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:9px; }
+#ranking-header h2, #pca-side h2, #side h2 { font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:9px; }
 #search { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:7px 10px; font-family:var(--sans); font-size:13px; color:var(--text); outline:none; }
 #search:focus { border-color:var(--accent); }
-#rank-head { display:grid; grid-template-columns:42px 70px 1fr 92px 74px 72px 78px; gap:9px; padding:10px 16px 8px; color:var(--muted); font-family:var(--mono); font-size:10px; border-bottom:1px solid var(--border); background:var(--panel); }
+#rank-head { display:grid; grid-template-columns:42px 70px 1fr 92px 74px 72px; gap:9px; padding:10px 16px 8px; color:var(--muted); font-family:var(--mono); font-size:10px; border-bottom:1px solid var(--border); background:var(--panel); }
 #rank-list { flex:1; min-height:0; overflow:auto; padding:8px 12px 18px; }
-.rank-row { display:grid; grid-template-columns:42px 70px 1fr 92px 74px 72px 78px; gap:9px; align-items:center; padding:8px 8px; border-bottom:1px solid rgba(255,255,255,.045); border-radius:4px; cursor:pointer; }
-#rank-head.has-start { grid-template-columns:42px 70px 1fr 56px 92px 74px 72px 78px; }
-.rank-row.has-start { grid-template-columns:42px 70px 1fr 56px 92px 74px 72px 78px; }
-.rank-row:hover { background:rgba(253,231,37,.07); }
-.rank-row.selected { background:rgba(253,231,37,.11); outline:1px solid rgba(253,231,37,.35); }
+.rank-row { display:grid; grid-template-columns:42px 70px 1fr 92px 74px 72px; gap:9px; align-items:center; padding:8px 8px; border-bottom:1px solid rgba(255,255,255,.045); border-radius:4px; cursor:pointer; }
+#rank-head.has-start { grid-template-columns:42px 70px 1fr 56px 92px 74px 72px; }
+.rank-row.has-start { grid-template-columns:42px 70px 1fr 56px 92px 74px 72px; }
+.rank-row:hover { background:rgba(var(--accent-rgb),.07); }
+.rank-row.selected { background:rgba(var(--accent-rgb),.11); outline:1px solid rgba(var(--accent-rgb),.35); }
 .rank-num { font-family:var(--mono); font-size:10px; color:var(--muted); }
 .car-badge { font-family:var(--mono); color:var(--accent); font-weight:700; font-size:13px; }
 .car-tile {
@@ -116,13 +117,14 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 .driver-small { font-family:var(--mono); font-size:11px; color:var(--muted); margin-bottom:10px; }
 .driver-name { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .limited-pill { display:inline; margin-left:10px; padding:0; border:none; border-radius:0; background:transparent; color:var(--accent); font-family:var(--mono); font-size:24px; line-height:1; vertical-align:baseline; }
-.limited-history-note { margin:8px 0 10px; padding:7px 8px; border:1px solid rgba(253,231,37,.25); border-radius:6px; background:rgba(253,231,37,.055); color:var(--muted); font-family:var(--mono); font-size:10px; line-height:1.45; }
+.limited-history-note { margin:8px 0 10px; padding:7px 8px; border:1px solid rgba(var(--accent-rgb),.25); border-radius:6px; background:rgba(var(--accent-rgb),.055); color:var(--muted); font-family:var(--mono); font-size:10px; line-height:1.45; }
 .score { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); }
 .subscore { font-family:var(--mono); color:var(--muted); font-size:11px; }
-#side { display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--panel); }
-#side-header { padding:14px 16px 10px; border-bottom:1px solid var(--border); flex-shrink:0; }
+#pca-side, #side { display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--panel); }
+#side { border-right:1px solid var(--border); }
+#pca-header, #side-header { padding:14px 16px 10px; border-bottom:1px solid var(--border); flex-shrink:0; }
 #side-header-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-#side-content { flex:1; min-height:0; overflow:auto; padding:14px 16px 20px; }
+#pca-content, #side-content { flex:1; min-height:0; overflow:auto; padding:14px 16px 20px; }
 .empty { color:var(--muted); font-family:var(--mono); font-size:11px; line-height:1.7; }
 .card { background:rgba(255,255,255,.025); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px; }
 .card-title { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:10px; }
@@ -154,8 +156,17 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 .prediction-rank-name.tyler { color:var(--accent); font-weight:700; }
 .prediction-rank-score { font-family:var(--mono); color:var(--text); font-size:15px; font-weight:700; white-space:nowrap; }
 .prediction-season-avg { color:var(--muted); font-weight:400; }
-.prediction-rank-cars { grid-column:2 / 4; display:flex; gap:5px; flex-wrap:wrap; margin-top:-5px; }
+.prediction-rank-cars { grid-column:2 / 4; display:flex; gap:5px; flex-wrap:nowrap; margin-top:-5px; }
 .prediction-results { border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:2px; }
+.pca-component { margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid var(--border); }
+.pca-component:last-child { border-bottom:none; }
+.pca-component-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px; }
+.pca-component-name { color:var(--accent); font-family:var(--mono); font-size:12px; font-weight:700; }
+.pca-component-impact { color:var(--muted); font-family:var(--mono); font-size:9px; }
+.pca-driver-tiles { display:grid; grid-template-columns:repeat(5, 28px); gap:7px; align-items:start; }
+.pca-driver-contribution { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.pca-driver-ev { color:var(--accent); font-family:var(--mono); font-size:8px; line-height:1; }
+.pca-loadings { color:var(--muted); font-family:var(--mono); font-size:8px; line-height:1.4; margin-top:6px; }
 .car-tile.tiny { width:28px; height:20px; border-radius:4px; }
 .car-tile.clickable { cursor:pointer; }
 .car-tile.clickable:hover { outline:1px solid var(--accent); }
@@ -172,7 +183,7 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 ::-webkit-scrollbar { width:4px; height:4px; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
-@media (max-width: 900px) { #main { grid-template-columns:1fr; } #side { display:none; } #rank-head, .rank-row { grid-template-columns:38px 58px 1fr 76px 64px 62px; } #rank-head.has-start, .rank-row.has-start { grid-template-columns:38px 58px 1fr 48px 76px 64px 62px; } #rank-head div:nth-last-child(1), .rank-row div:nth-last-child(1) { display:none; } }
+@media (max-width: 1100px) { #main { grid-template-columns:1fr; } #pca-side, #side { display:none; } #rank-head, .rank-row { grid-template-columns:38px 58px 1fr 76px 64px 62px; } #rank-head.has-start, .rank-row.has-start { grid-template-columns:38px 58px 1fr 48px 76px 64px 62px; } }
 </style>
 </head>
 <body>
@@ -190,6 +201,10 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
   <select class="select" id="hist-year" style="display:none"><option value="">Year</option></select>
   <select class="select" id="hist-race" style="display:none"><option value="">Race</option></select>
   <button class="btn" id="btn-run-hist" style="display:none" onclick="runHistorical()">▶ Run</button>
+  <select class="select" id="series-select" title="Series">
+    <option value="cup">Cup Series</option>
+    <option value="oreilly">O’Reilly Series</option>
+  </select>
   <div class="divider"></div>
   <select class="select" id="display-select" title="Odds format">
     <option value="prob">Probability</option>
@@ -225,18 +240,132 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
     </div>
     <div id="side-content"><div class="empty">Select one driver to see cumulative markets. Select two for head-to-head. Select 3+ for probability each finishes best of the group.</div></div>
   </aside>
+  <aside id="pca-side">
+    <div id="pca-header">
+      <h2>Principal Components</h2>
+      <div class="meta" id="pca-meta">—</div>
+    </div>
+    <div id="pca-content"><div class="empty">PCA summary loads with prediction data.</div></div>
+  </aside>
 </div>
 <script>
 let DATA_LAST=null, DATA_NEXT=null, DATA_HIST=null, HIST_INDEX=[];
 const SEASON_COMPARISON_CACHE = new Map();
 let mode='last_race';   // 'last_race' | 'next_race' | 'historical'
-let track='s', rankMode='expected_finish', sortDir='asc', displayMode='prob', selected=new Set(), query='';
+let series='cup';
+let track='s', rankMode='prediction', sortDir='asc', displayMode='prob', selected=new Set(), query='';
 const $ = sel => document.querySelector(sel);
 const MARKET_KEYS = [
   ['win','Win'], ['top3','Top 3'], ['top5','Top 5'], ['top10','Top 10'], ['top15','Top 15'], ['top20','Top 20'], ['top25','Top 25']
 ];
 
 function activeData(){ return mode==='last_race' ? DATA_LAST : (mode==='historical' ? DATA_HIST : DATA_NEXT); }
+function seriesSuffix(){ return series === 'cup' ? '' : `_${series}`; }
+function predictionFile(){ return `predictions${seriesSuffix()}.json`; }
+function legacyPredictionFile(){ return `predictions_next_race${seriesSuffix()}.json`; }
+async function loadNextRacePrediction(){
+  const candidates=[predictionFile(), legacyPredictionFile()];
+  for(const file of candidates){
+    try{
+      const res=await fetch(file+'?_='+Date.now());
+      if(res.ok) return await res.json();
+    }catch(_e){}
+  }
+  throw new Error('No next-race prediction file found.');
+}
+function latestHistoricalEntry(){
+  return [...HIST_INDEX].filter(e=>e.predicted).sort((a,b)=>(Number(b.season)-Number(a.season))||(Number(b.race_num)-Number(a.race_num)))[0] || null;
+}
+async function loadLastRaceFromHistory(){
+  const entry=latestHistoricalEntry();
+  if(!entry){ DATA_LAST=null; return; }
+  const res=await fetch(entry.file+'?_='+Date.now());
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  DATA_LAST=await res.json();
+}
+function apiUrl(path){ return `${path}${path.includes('?') ? '&' : '?'}series=${encodeURIComponent(series)}`; }
+
+async function loadSeriesData(){
+  const preferredMode = mode;
+  DATA_LAST=null; DATA_NEXT=null; DATA_HIST=null; HIST_INDEX=[]; selected.clear();
+  SEASON_COMPARISON_CACHE.clear();
+  const st=await fetch(apiUrl('/api/status'));
+  if(!st.ok) throw new Error(`Series status failed: HTTP ${st.status}`);
+  const payload=await st.json();
+  // Verify that the backend honored the selected series. Surface the actual
+  // mismatch rather than guessing why it happened.
+  if(payload.series && payload.series !== series){
+    throw new Error(`Series mismatch: requested ${series}, backend returned ${payload.series}.`);
+  }
+  if(Array.isArray(payload.index)) HIST_INDEX=payload.index;
+  populateHistoricalControls();
+  const [lr,nr]=await Promise.allSettled([
+    loadLastRaceFromHistory(),
+    loadNextRacePrediction(),
+  ]);
+  if(lr.status!=='fulfilled') DATA_LAST=null;
+  if(nr.status==='fulfilled') DATA_NEXT=nr.value;
+  const availableModes = {
+    last_race: Boolean(DATA_LAST),
+    next_race: Boolean(DATA_NEXT),
+    historical: Boolean(HIST_INDEX.length),
+  };
+  mode = availableModes[preferredMode]
+    ? preferredMode
+    : (DATA_LAST ? 'last_race' : (DATA_NEXT ? 'next_race' : 'historical'));
+
+  // Rebuilding the historical dropdowns selects a race, but that selection
+  // does not fire a change event. Explicitly load it when the active mode is
+  // historical (especially after switching Cup <-> O'Reilly).
+  if(mode === 'historical' && HIST_INDEX.length){
+    await loadSelectedHistorical();
+  }
+
+  const data=activeData();
+  if(data&&data.tracks) track=Object.keys(data.tracks)[0]||'s';
+  toggleHistoricalControls(); updateRunButton();
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.id===`btn-${mode.replace('_','-')}`));
+  $('#btn-last-race').disabled=false;
+  $('#btn-next-race').disabled=false;
+  $('#btn-historical').disabled=false;
+  await loadSeasonComparison(activeSeason());
+}
+
+function applySeriesTheme(){
+  const root=document.documentElement;
+  if(series==='oreilly'){
+    root.style.setProperty('--accent','#39e75f');
+    root.style.setProperty('--accent-rgb','57,231,95');
+  }else{
+    root.style.setProperty('--accent','#fde725');
+    root.style.setProperty('--accent-rgb','253,231,37');
+  }
+}
+
+async function setSeries(value){
+  series=value || 'cup';
+  $('#series-select').value=series;
+  applySeriesTheme();
+  const label=series==='cup'?'Cup':'O’Reilly';
+  setStatus(`Loading ${label} Series...`);
+  try{
+    await loadSeriesData();
+    if(!DATA_LAST&&!DATA_NEXT&&!HIST_INDEX.length){
+      $('#rank-head').innerHTML='';
+      $('#rank-list').innerHTML=`<div class="empty"><b>${label} Series selected.</b><br>No data yet — click <b>↻ Refresh data</b> to build it.</div>`;
+      $('#side-content').innerHTML='<div class="empty">No prediction data loaded for this series yet.</div>';
+      setStatus(`${label} Series · no data yet`);
+      return;
+    }
+    setStatus('');
+    render();
+  }catch(err){
+    console.error(err);
+    $('#rank-head').innerHTML='';
+    $('#rank-list').innerHTML=`<div class="empty"><b>Could not switch to ${label} Series.</b><br>${escapeHtml(err.message)}</div>`;
+    setStatus(err.message,true);
+  }
+}
 
 async function setMode(m){
   mode = m;
@@ -253,6 +382,13 @@ async function setMode(m){
     if(!available.includes(track)) track = available[0] || 's';
   }
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b.id===`btn-${m.replace('_','-')}`));
+  if(!activeData()){
+    const label = m === 'last_race' ? 'last-race' : (m === 'next_race' ? 'next-race' : 'historical');
+    $('#rank-head').innerHTML='';
+    $('#rank-list').innerHTML=`<div class="empty">No ${label} prediction data could be loaded for this series. Run <b>↻ Refresh data</b> to rebuild it.</div>`;
+    $('#side-content').innerHTML='<div class="empty">No prediction data loaded.</div>';
+    return;
+  }
   render();
 }
 function clamp(x,a,b){return Math.max(a,Math.min(b,x));}
@@ -331,7 +467,7 @@ async function runHistorical(){
   btn.textContent='⏳ Building season…';btn.disabled=true;
   setStatus('Building all missing '+year+' historical predictions...');
   try{
-    const res=await fetch('/api/run_historical',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({year:Number(year),race:Number(raceNum)})});
+    const res=await fetch('/api/run_historical',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({year:Number(year),race:Number(raceNum),series})});
     const data=await res.json();
     if(!data.ok){setStatus('Error: '+(data.error||'unknown'),true);return;}
     if(Array.isArray(data.index)){HIST_INDEX=data.index;populateHistoricalControls(year, raceNum);updateRunButton();}
@@ -350,15 +486,15 @@ async function refreshData(){
   btn.textContent='⏳ Refreshing…';btn.disabled=true;
   setStatus('Checking for new races and rebuilding predictions...');
   try{
-    const res=await fetch('/api/scrape',{method:'POST'});
+    const res=await fetch(apiUrl('/api/scrape'),{method:'POST'});
     const data=await res.json();
     if(!data.ok){setStatus('Refresh error: '+(data.error||'check console'),true);console.error(data);return;}
     if(Array.isArray(data.index)){HIST_INDEX=data.index;populateHistoricalControls($('#hist-year').value, $('#hist-race').value);updateRunButton();}
     const[lr,nr]=await Promise.all([
-      fetch('predictions_last_race.json?_='+Date.now()).then(r=>r.ok?r.json():null),
-      fetch('predictions_next_race.json?_='+Date.now()).then(r=>r.ok?r.json():null),
+      loadLastRaceFromHistory().then(()=>DATA_LAST).catch(()=>null),
+      loadNextRacePrediction().catch(()=>null),
     ]);
-    if(lr)DATA_LAST=lr;if(nr)DATA_NEXT=nr;
+    DATA_LAST=lr;if(nr)DATA_NEXT=nr;
     const d=activeData();if(d&&d.tracks)track=Object.keys(d.tracks)[0]||'s';
     SEASON_COMPARISON_CACHE.clear();
     await loadSeasonComparison(activeSeason());
@@ -384,16 +520,18 @@ const NAVY  = "#101080";
 const YELLOW = "#ffe100";
 const NEON = "#e1ff00"
 const ORANGE = "#ff7300";
-const GREEN  = "#00a843";
-const LIME  = "#82e31a";
+const GREEN  = "#00903a";
+const LIME  = "#75cf15";
 const SKY   = "#1cb2e4";
 const PALEBLUE = "hsl(210, 100%, 81%)"
 const PURPLE = "#4f00b5";
 const SILVER = "#808080";
-const GOLD = "#e2ab29";
-const BEIGE = "#e2cea0"
-const BROWN = "#522a09"
-const MAGENTA = "#e113d3"
+const GOLD = "#e29b29";
+const BEIGE = "#e2cea0";
+const BROWN = "#522a09";
+const MAROON =  "#610000"
+const MAGENTA = "#e113d3";
+const TEAL = "#15cf9a"
 
 // Number tile palette: [background, number fill, number outline]
 const CAR_SCHEMES = {
@@ -405,7 +543,7 @@ const CAR_SCHEMES = {
   ],
   '2' : [
     [BLUE,   WHITE, RED, 2010, 2013],
-    [WHITE,   BLUE, RED, 2014, 2019],
+    [WHITE,   NAVY, RED, 2014, 2019],
     [WHITE,   BLACK, RED, 2020, 2026]
   ],
   '3' : [
@@ -435,7 +573,7 @@ const CAR_SCHEMES = {
     [ORANGE, WHITE, BLACK, 2010, 2012],
     [REDORANGE, WHITE, BLACK, 2013],
     [YELLOW, REDORANGE, BLACK, 2014],
-    [SKY, WHITE, RED, 2015, 2016],
+    [BLACK, WHITE, SKY, 2015, 2016],
     [WHITE, ORANGE, BLACK, 2021, 2024],
     [YELLOW, WHITE, BLACK, 2025, 2025],
     [BLUE,  LIME, WHITE, 2026, 2026],
@@ -451,6 +589,7 @@ const CAR_SCHEMES = {
     [WHITE,   BLUE, YELLOW, 2018, 2026]
   ],
   '10': [
+    [GREEN, WHITE, BLACK, 2010],
     [WHITE, RED, BLACK, 2012],
     [LIME, ORANGE, BLACK, 2013, 2015],
     [SKY, WHITE, BLACK, 2016, 2017],
@@ -475,7 +614,11 @@ const CAR_SCHEMES = {
     [BLUE, WHITE, BLACK, 2021, 2024]
   ],
   '15': [
-    [RED,  WHITE, BLACK, 2012, 2016]
+    [BLUE, WHITE, GOLD, 2011],
+    [RED,  WHITE, BLACK, 2012, 2016],
+    [BLACK, WHITE, SKY, 2017, 2019],
+    [WHITE, BLUE, NEON, 2020],
+    [WHITE, RED, BLACK, 2021, 2024]
   ],
   '16': [
     [WHITE,  YELLOW, BLACK, 2010, 2014],
@@ -512,25 +655,28 @@ const CAR_SCHEMES = {
     [YELLOW, REDORANGE, BLACK, 2011, 2026]
   ],
   '23': [
-    [RED,    WHITE, BLACK, 2012, 2018],
+    [MAROON,    WHITE, BLACK, 2012, 2018],
     [REDORANGE,    WHITE, BLACK, 2021, 2026]
   ],
   '24': [
     [REDORANGE, YELLOW, BLACK, 2010, 2015],
-    [NAVY, WHITE, BLACK, 2016, 2020],
+    [BLUE, WHITE, BLACK, 2016, 2020],
     [REDORANGE, YELLOW, BLACK, 2021, 2026]
   ],
   '25':[
-    [NAVY, WHITE, BLACK, 2015],
+    [BLUE, WHITE, BLACK, 2015],
   ],
   '26':[
+    [BLACK, WHITE, GOLD, 2010],
     [NAVY, ORANGE, WHITE, 2012],
+    [WHITE, GREEN, BLACK, 2013],
     [BLUE, WHITE, BLACK, 2014],
-    [RED,    WHITE, BLACK, 2015],
+    [RED,    WHITE, BLACK, 2015, 2016],
     [ORANGE,    WHITE, BLACK, 2022],
   ],
   '27':[
     [NEON, BLACK, WHITE, 2011, 2017],
+    [BLACK, WHITE, SKY, 2019, 2020],
     [ORANGE,    WHITE, BLACK, 2022],
   ],
   '29': [
@@ -556,19 +702,23 @@ const CAR_SCHEMES = {
   ],
   '33' : [
     [YELLOW, BLACK, WHITE, 2010, 2011],
+    [BLACK, WHITE, RED, 2012],
+    [GOLD, BLACK, WHITE, 2013],
+    [BLACK, WHITE, RED, 2014, 2017],
     [BLACK, WHITE, RED, 2021, 2026],
   ],
   '34': [
-    [BLUE, YELLOW, WHITE, 2010],
+    [BLUE, YELLOW, BLUE, 2010],
     [NAVY, MAGENTA, WHITE, 2011],
     [BLACK, SKY, WHITE, 2012],
     [YELLOW, WHITE, BLACK, 2013, 2015],
     [YELLOW, BLACK, REDORANGE, 2016, 2026],
   ],
   '35': [
+    [WHITE, RED, BLACK, 2011],
     [NAVY, ORANGE, WHITE, 2013, 2014],
     [NAVY, WHITE, BLACK, 2015],
-    [BLACK, WHITE, GREEN, 2022, 2026]
+    [BLACK, WHITE, LIME, 2022, 2026]
   ],
   '36': [
     [WHITE, RED, BLACK, 2010, 2014],
@@ -585,7 +735,7 @@ const CAR_SCHEMES = {
     [YELLOW, REDORANGE, BLACK, 2013, 2015],
     [WHITE, ORANGE, BLACK, 2016, 2019],
     [BLACK,  WHITE, RED, 2020, 2024],
-    [BLUE, WHITE, GREEN, 2025, 2026],
+    [BLUE, WHITE, LIME, 2025, 2026],
   ],
   '39': [
     [BLACK, WHITE, GOLD, 2010, 2012],
@@ -621,6 +771,7 @@ const CAR_SCHEMES = {
     [BLACK,   RED, WHITE, 2022, 2026]
   ],
   '46': [
+    [WHITE,   RED, BLACK, 2010, 2011],
     [WHITE,   RED, BLACK, 2015, 2016]
   ],
   '47': [
@@ -638,22 +789,36 @@ const CAR_SCHEMES = {
     [BLACK,    NEON, BLACK, 2018, 2020],
     [PURPLE,    WHITE, BLACK, 2022, 2026]
   ],
+  '49': [
+    [BLACK, WHITE, LIME, 2012]
+  ],
   '51': [
+    [BLUE, ORANGE, YELLOW, 2010],
     [RED,   WHITE, BLACK, 2011, 2013],
     [REDORANGE,   BLACK, WHITE, 2014, 2015],
-    [BLUE,   REDORANGE, WHITE, 2018, 2026]
+    [BLUE,   REDORANGE, WHITE, 2018, 2020],
+    [PURPLE,   WHITE, SKY, 2021, 2022],
+    [NAVY,   WHITE, GREEN, 2023],
+    [BLUE,   REDORANGE, WHITE, 2024, 2026]
   ],
   '52': [
+    [BLACK,   WHITE, RED, 2018, 2020],
     [BLACK,   WHITE, GOLD, 2021]
   ],
+  '53': [
+    [BLACK,   WHITE, RED, 2019, 2021],
+  ],
   '54': [
-    [BLACK, WHITE, GREEN, 2023, 2026]
+    [BLACK,   WHITE, RED, 2019],
+    [BLACK, WHITE, LIME, 2023, 2026]
   ],
   '55': [
+    [NAVY, ORANGE, WHITE, 2010],
+    [WHITE, SKY, BLACK, 2011],
     [BLUE, WHITE, BLUE, 2012, 2016]
   ],
   '56': [
-    [BLUE, WHITE, RED, 2010, 2013],
+    [BLUE, WHITE, GOLD, 2010, 2013],
     [BLACK, REDORANGE, WHITE, 2025]
   ],
   '59': [
@@ -668,8 +833,13 @@ const CAR_SCHEMES = {
     [BLACK,   WHITE, GOLD, 2018, 2020],
     [BLACK,   WHITE, SKY, 2022, 2026]
   ],
+  '64': [
+    [SILVER,   RED, WHITE, 2010],
+  ],
   '66': [
+    [BLUE,   RED, WHITE, 2010],
     [BLACK,   RED, WHITE, 2011],
+    [BLACK, WHITE, SKY, 2014]
   ],
   '67': [
     [WHITE,   RED, BLACK, 2023, 2024],
@@ -686,7 +856,9 @@ const CAR_SCHEMES = {
   ],
   '77': [
     [BLACK,   WHITE, RED, 2010],
+    [BLACK, NEON, REDORANGE, 2011],
     [REDORANGE,   WHITE, BLACK, 2017],
+    [BLACK, WHITE, SKY, 2019, 2020],
     [NAVY,   WHITE, BLACK, 2021],
     [YELLOW,   WHITE, BLACK, 2022, 2026]
   ],
@@ -700,7 +872,7 @@ const CAR_SCHEMES = {
   '83': [
     [NAVY,   WHITE, RED, 2010],
     [SILVER,   NAVY, WHITE, 2011],
-    [RED,   WHITE, BLACK, 2012, 2013],
+    [MAROON,   WHITE, BLACK, 2012, 2013],
     [BLACK,   WHITE, RED, 2014, 2017],
   ],
   '84': [
@@ -725,8 +897,11 @@ const CAR_SCHEMES = {
     [SKY,   WHITE, RED, 2025],
     [NAVY,   WHITE, RED, 2026],
   ],
+  '92': [
+    [WHITE,   RED, BLACK, 2011],
+  ],
   '93': [
-    [RED,   WHITE, BLACK, 2012],
+    [MAROON,   WHITE, BLACK, 2012],
     [NAVY,   WHITE, BLACK, 2013],
     [BLACK,   WHITE, RED, 2016],
   ],
@@ -740,6 +915,7 @@ const CAR_SCHEMES = {
     [REDORANGE,   WHITE, BLACK, 2021],
   ],
   '97': [
+    [NAVY, NEON, RED, 2011, 2012],
     [NAVY,   WHITE, RED, 2026],
   ],
   '98': [
@@ -763,7 +939,683 @@ const CAR_SCHEMES = {
   '01': [
     [BLACK, WHITE, RED, 2025]
   ],
+  '09': [
+    [RED, WHITE, BLACK, 2010, 2011]
+  ],
 };
+
+// O'Reilly Series schemes use the same format as Cup:
+// [background, number fill, number outline, first season, last season]
+const OREILLY_CAR_SCHEMES = {
+  '0': [
+    [WHITE, RED, BLACK, 2008, 2009],
+    [RED, YELLOW, BLACK, 2015, 2017],
+    [RED, WHITE, BLACK, 2018, 2021],
+    [GREEN, WHITE, BLACK, 2026],
+  ],
+  '1': [
+    [RED, WHITE, BLACK, 2010, 2013],
+    [BLUE, WHITE, RED, 2015, 2018],
+    [WHITE, RED, YELLOW, 2019, 2021],
+    [SKY, BLACK, WHITE, 2022, 2024],
+    [REDORANGE, BLACK, WHITE, 2025, 2026]
+  ],
+
+  '2': [
+    [MAROON, WHITE, BLACK, 2005, 2008],
+    [BLACK, WHITE, RED, 2009],
+    [BLUE, RED, WHITE, 2011, 2012],
+    [BLACK, WHITE, SILVER, 2013, 2015],
+    [BLACK, WHITE, RED, 2016, 2017],
+    [RED, WHITE, BLACK, 2018],
+    [BLACK, WHITE, RED, 2019],
+    [RED, WHITE, BLACK, 2021, 2026]
+  ],
+
+  '3': [
+    [BLUE, YELLOW, BLACK, 2010],
+    [BLACK, WHITE, REDORANGE, 2012, 2026]
+  ],
+  '4': [
+    [BLUE, WHITE, BLACK, 2010, 2011],
+    [BLACK, REDORANGE, WHITE, 2012],
+    [BLACK, YELLOW, RED, 2013],
+    [RED, WHITE, BLACK, 2014, 2020],
+    [PURPLE, WHITE, BLACK, 2021],
+    [RED, WHITE, BLACK, 2022, 2023],
+    [WHITE, BLACK, WHITE, 2024],
+    [SKY, BLACK, WHITE, 2025, 2026]
+  ],
+  '5': [
+    [NAVY, NEON, BLACK, 2005, 2007],
+    [WHITE, RED, NAVY, 2008, 2009],
+    [YELLOW, NAVY, WHITE, 2011, 2012],
+    [BLACK, WHITE, SKY, 2013],
+    [BLACK, WHITE, RED, 2014, 2016],
+    [RED, YELLOW, BLACK, 2017, 2018],
+    [BLACK, REDORANGE, WHITE, 2019, 2023],
+    [BLACK, WHITE, SKY, 2024],
+    [NAVY, WHITE, RED, 2025],
+    [BLACK, SKY, WHITE, 2026]
+  ],
+
+  '6': [
+    [WHITE, REDORANGE, BLACK, 2005, 2009],
+    [BLUE, WHITE, BLACK, 2010, 2013],
+    [WHITE, RED, NAVY, 2014],
+    [PURPLE, WHITE, BLACK, 2015, 2017],
+    [RED, WHITE, BLACK, 2018, 2023]
+  ],
+
+  '7': [
+    [BLUE, WHITE, RED, 2007, 2008],
+    [LIME, ORANGE, BLACK, 2010, 2012],
+    [RED, WHITE, BLACK, 2013, 2015],
+    [REDORANGE, YELLOW, BLACK, 2016, 2026]
+  ],
+
+  '8': [
+    [BLACK, WHITE, REDORANGE, 2005, 2008],
+    [GREEN, WHITE, BLACK, 2015],
+    [RED, YELLOW, BLACK, 2016],
+    [BLACK, NEON, GREEN, 2017, 2018],
+    [ORANGE, WHITE, BLACK, 2019, 2020],
+    [BLACK, WHITE, RED, 2021, 2022],
+    [SILVER, ORANGE, BLACK, 2023],
+    [REDORANGE, WHITE, RED, 2024],
+    [BLACK, WHITE, REDORANGE, 2025, 2026]
+  ],
+
+  '9': [
+    [YELLOW, WHITE, BLACK, 2011, 2013],
+    [NAVY, WHITE, RED, 2014, 2017],
+    [WHITE, BLACK, GREEN, 2018],
+    [SILVER, RED, WHITE, 2019],
+    [SILVER, ORANGE, BLACK, 2020, 2022],
+
+    [NEON, BLACK, WHITE, 2023, 2024],
+    [NAVY, LIME, WHITE, 2025],
+    [ORANGE, WHITE, BLACK, 2026],
+  ],
+  '10': [
+    [MAROON, WHITE, BLACK, 2009, 2010],
+    [BLACK, SKY, WHITE, 2012, 2014],
+    [LIME, BLACK, WHITE, 2018, 2021],
+    [PURPLE, WHITE, BLACK, 2022],
+    [WHITE, YELLOW, BLACK, 2023, 2024],
+    [REDORANGE, YELLOW, BLACK, 2025],
+  ],
+  '11': [
+    [WHITE, REDORANGE, BLACK, 2008, 2009],
+    [YELLOW, WHITE, BLACK, 2010, 2012],
+    [BLUE, RED, WHITE, 2013, 2014],
+    [GREEN, WHITE, BLACK, 2016, 2021],
+    [WHITE, BLUE, SKY, 2022, 2023],
+    [BLUE, NEON, SKY, 2024, 2025],
+
+  ],
+  '12': [
+    [YELLOW, BLUE, WHITE, 2008],
+    [BLACK, WHITE, RED, 2009, 2010],
+    [YELLOW, BLACK, WHITE, 2011, 2013],
+    [WHITE, RED, BLACK, 2014, 2019],
+    [WHITE, GOLD, BLACK, 2020],
+  ],
+  '13': [
+    [BLACK, WHITE, RED, 2016, 2017],
+    [WHITE, SKY, BLACK, 2018, 2019],
+    [BLACK, WHITE, GOLD, 2020],
+    [WHITE, RED, BLACK, 2021, 2022]
+  ],
+  '14': [
+    [ORANGE, WHITE, BLACK, 2011, 2014],
+    [WHITE, RED, BLACK, 2024, 2025]
+  ],
+  '15': [
+    [RED, WHITE, BLACK, 2009, 2010],
+    [BLUE, WHITE, BLACK, 2011],
+    [RED, WHITE, BLACK, 2017, 2021],
+    [WHITE, PALEBLUE, BLACK, 2024],
+  ],
+  '16': [
+    [RED, WHITE, NAVY, 2005, 2007],
+    [BLUE, WHITE, BLACK, 2008, 2009],
+    [BLACK, WHITE, PALEBLUE, 2010],
+    [WHITE, BLUE, BLACK, 2011, 2013],
+    [RED, WHITE, SILVER, 2014, 2017],
+    [WHITE, BLACK, ORANGE, 2018, 2025],
+  ],
+  '17': [
+    [WHITE, RED, BLACK, 2010],
+    [BLACK, WHITE, SKY, 2012, 2014],
+    [WHITE, BLUE, BLACK, 2020, 2021],
+    [BLUE, WHITE, RED, 2022, 2026]
+  ],
+
+  '18': [
+    [ORANGE, WHITE, BLACK, 2005, 2007],
+    [BLACK, WHITE, REDORANGE, 2008, 2013],
+    [ORANGE, RED, WHITE, 2015],
+    [SKY, WHITE, BLACK, 2016, 2017],
+    [WHITE, BLACK, RED, 2018, 2019],
+    [BLACK, WHITE, LIME, 2020],
+    [ORANGE, WHITE, BLACK, 2021],
+    [WHITE, YELLOW, RED, 2022, 2023],
+    [BLACK, PURPLE, WHITE, 2024],
+    [ORANGE, BLACK, WHITE, 2025],
+    [WHITE, ORANGE, BLACK, 2026],
+  ],
+
+  '19': [
+    [BLACK, SKY, WHITE, 2011],
+    [WHITE, LIME, BLACK, 2012],
+    [WHITE, BLACK, WHITE, 2013, 2015],
+    [ORANGE, RED, WHITE, 2016],
+    [BLACK, WHITE, RED, 2017],
+    [NEON, BLACK, WHITE, 2018, 2022],
+    [BLACK, WHITE, RED, 2023, 2024],
+    [WHITE, NAVY, NEON, 2025],
+    [WHITE, RED, BLUE, 2026],
+  ],
+
+  '20': [
+    [BLACK, WHITE, RED, 2008, 2012],
+    [NEON, WHITE, BLACK, 2013],
+    [BLACK, WHITE, RED, 2014, 2017],
+    [RED, WHITE, BLACK, 2018],
+    [WHITE, RED, BLACK, 2019],
+    [WHITE, BLACK, RED, 2020, 2021],
+    [WHITE, BLUE, WHITE, 2023, 2024],
+    [NEON, BLACK, WHITE, 2025, 2026],
+  ],
+
+  '21': [
+    [YELLOW, BLUE, WHITE, 2010],
+    [RED, WHITE, BLACK, 2012, 2015],
+    [GREEN, WHITE, BLACK, 2017],
+    [GOLD, WHITE, BLACK, 2018],
+    [WHITE, RED, BLACK, 2019, 2020],
+    [WHITE, SKY, NAVY, 2022, 2026]
+  ],
+
+  '22': [
+    // Brad Keselowski / Penske drivers — Discount Tire
+    [WHITE, BLACK, RED, 2010, 2017],
+    [WHITE, TEAL, BLACK, 2018, 2020],
+    [NEON, BLACK, WHITE, 2021],
+  ],
+  '23': [
+    [BLACK, WHITE, RED, 2008, 2014],
+    [SKY, WHITE, BLACK, 2017, 2018],
+    [BLACK, WHITE, RED, 2019],
+    [BLACK, WHITE, RED, 2021],
+    [BLACK, WHITE, SKY, 2022],
+  ],
+  '24': [
+    [ORANGE, WHITE, BLUE, 2008, 2010],
+    [SILVER, BLUE, WHITE, 2015],
+    [BLACK, WHITE, ORANGE, 2016, 2017],
+    [WHITE, BLACK, WHITE, 2018],
+    [BLACK, WHITE, RED, 2021, 2024],
+    [WHITE, RED, BLACK, 2025, 2026],
+  ],
+  '25': [
+    [BLACK, NEON, BLACK, 2008, 2009],
+    [YELLOW, BLUE, WHITE, 2013, 2015],
+    [RED, NEON, BLACK, 2016, 2020],
+    [WHITE, NAVY, RED, 2023],
+    [SILVER, WHITE, RED, 2025],
+    [PURPLE, WHITE, ORANGE, 2026],
+  ],
+  '26': [
+    [WHITE, REDORANGE, BLACK, 2009, 2010],
+    [WHITE, BLACK, RED, 2020, 2022],
+    [WHITE, NAVY, SKY, 2023],
+    [WHITE, RED, BLACK, 2024],
+    [NAVY, WHITE, BLACK, 2025, 2026],
+  ],
+  '27': [
+    [NAVY, NEON, BLACK, 2008],
+    [BLUE, WHITE, BLUE, 2009],
+    [BLACK, WHITE, RED, 2010],
+    [SKY, NEON, BLACK, 2011],
+    [BLACK, REDORANGE, WHITE, 2012],
+    [BLACK, WHITE, RED, 2013],
+    [BLACK, WHITE, ORANGE, 2022, 2024],
+    [RED, WHITE, BLACK, 2025, 2026],
+  ],
+  '28': [
+    [WHITE, YELLOW, BLACK, 2008, 2009],
+    [WHITE, ORANGE, BLACK, 2010],
+    [BLACK, WHITE, REDORANGE, 2011],
+    [BLACK, WHITE, RED, 2014, 2015],
+    [BLACK, WHITE, GREEN, 2016, 2018],
+    [RED, WHITE, BLACK, 2019],
+    [BLACK, WHITE, RED, 2022, 2026],
+  ],
+  '29': [
+    [GREEN, WHITE, BLACK, 2008, 2009],
+    [RED, WHITE, BLACK, 2013, 2015],
+    [BLACK, WHITE, RED, 2023],
+    [SKY, YELLOW, NAVY, 2024],
+  ],
+  '30': [
+    [BLUE, ORANGE, WHITE, 2008],
+    [BLACK, WHITE, GREEN, 2010, 2012],
+    [WHITE, ORANGE, BLACK, 2013],
+    [WHITE, RED, SKY, 2024]
+  ],
+  '31': [
+    [REDORANGE, WHITE, BLACK, 2011, 2013],
+    [BLACK, WHITE, GOLD, 2014],
+    [RED, WHITE, BLACK, 2021, 2022],
+    [BLACK, WHITE, SKY, 2023, 2024],
+    [WHITE, GOLD, NAVY, 2025, 2026],
+  ],
+  '32': [
+    [YELLOW, BLACK, WHITE, 2008, 2011],
+    [WHITE, BLUE, BLACK, 2012, 2013],
+    [YELLOW, RED, WHITE, 2024, 2025],
+    [RED, BLACK, WHITE, 2026],
+  ],
+
+  '33': [
+    // Kevin Harvick / Ron Hornaday — Camping World, KHI
+    [YELLOW, BLACK, RED, 2005, 2007],
+
+    // Kevin Harvick — Rheem, KHI
+    [BLACK, WHITE, RED, 2008, 2011],
+    [NEON, BLACK, WHITE, 2012, 2017],
+    [BLUE, WHITE, RED, 2025],
+    [RED, WHITE, BLACK, 2026],
+  ],
+  '34': [
+    [YELLOW, BLUE, WHITE, 2009, 2010],
+    [GREEN, WHITE, BLACK, 2022]
+  ],
+  '35': [
+    [WHITE, BLACK, WHITE, 2010],
+    [BLACK, NEON, BLACK, 2018],
+    [SKY, WHITE, BLACK, 2019, 2024],
+    [WHITE, YELLOW, BLACK, 2025],
+    [BLACK, REDORANGE, WHITE, 2026],
+  ],
+  '36': [
+    [BLUE, WHITE, RED, 2008],
+    [YELLOW, BLUE, WHITE, 2010],
+    [YELLOW, WHITE, BLACK, 2012],
+    [RED, WHITE, BLACK, 2014],
+    [GOLD, WHITE, BLACK, 2018, 2019],
+    [NEON, BLACK, NEON, 2020, 2022],
+    [ORANGE, WHITE, BLACK, 2023, 2024]
+  ],
+  '38': [
+    [RED, WHITE, BLACK, 2008, 2011],
+    [WHITE, BLACK, RED, 2012],
+    [RED, WHITE, BLACK, 2013],
+    [BLACK, WHITE, RED, 2017, 2023],
+    [WHITE, BLACK, MAGENTA, 2024],
+    [BLACK, WHITE, RED, 2026],
+  ],
+
+  '39': [
+    [NEON, BLACK, WHITE, 2011],
+    [WHITE, SKY, BLACK, 2012],
+    [BLACK, NEON, REDORANGE, 2013, 2014],
+    [BLUE, YELLOW, NAVY, 2015],
+    [REDORANGE, NEON, BLACK, 2016],
+    [BLACK, WHITE, RED, 2017, 2019],
+    [NAVY, WHITE, SKY, 2020, 2023],
+    [RED, WHITE, BLACK, 2024, 2025],
+    [BLACK, RED, WHITE, 2026]
+  ],
+
+  '40': [
+    [SKY, WHITE, BLACK, 2008],
+    [WHITE, REDORANGE, YELLOW, 2009, 2011],
+    [WHITE, SKY, BLACK, 2012],
+    [BLACK, WHITE, RED, 2013, 2018]
+  ],
+  '41': [
+    [BLACK, REDORANGE, WHITE, 2008],
+    [BLACK, WHITE, RED, 2009, 2012],
+    [GREEN, WHITE, RED, 2017],
+    [BLACK, LIME, WHITE, 2025, 2026],
+  ],
+  '42': [
+    [BLACK, REDORANGE, WHITE, 2009, 2010],
+    [WHITE, RED, BLACK, 2011],
+    [WHITE, SKY, BLACK, 2012],
+    [BLACK, WHITE, SKY, 2013],
+    [WHITE, RED, WHITE, 2014],
+    [REDORANGE, WHITE, BLACK, 2015, 2016],
+    [BLACK, WHITE, RED, 2017, 2018],
+    [RED, WHITE, BLACK, 2019],
+    [WHITE, BLACK, WHITE, 2024],
+    [SKY, WHITE, BLACK, 2025],
+    [WHITE, RED, BLACK, 2026]
+  ],
+  '43': [
+    [BLACK, REDORANGE, WHITE, 2010],
+    [BLACK, WHITE, REDORANGE, 2012],
+    [YELLOW, WHITE, BLACK, 2013],
+    [BLACK, WHITE, GREEN, 2014, 2015],
+    [SKY, WHITE, NAVY, 2016],
+    [SKY, BLACK, WHITE, 2023, 2024]
+
+  ],
+  '44': [
+    [BLACK, WHITE, BLUE, 2011],
+    [WHITE, BLUE, BLACK, 2012, 2013],
+    [BLACK, WHITE, RED, 2014],
+    [GREEN, WHITE, BLACK, 2015, 2016],
+    [BLACK, NEON, BLACK, 2020, 2021],
+    [RED, BLACK, WHITE, 2022, 2023],
+    [BLUE, NEON, BLACK, 2024, 2026],
+  ],
+  '45': [
+    [BLUE, NEON, BLACK, 2018],
+    [BLACK, WHITE, GREEN, 2022, 2023],
+    [RED, BLACK, WHITE, 2024],
+    [SKY, NEON, BLACK, 2025],
+    [ORANGE, BLACK, WHITE, 2026],
+  ],
+  '46': [
+    [WHITE, RED, BLACK, 2011],
+    [WHITE, SKY, BLACK, 2012],
+    [BLACK, SKY, WHITE, 2013, 2014],
+    [BLACK, WHITE, RED, 2016],
+    [BLACK, LIME, BLACK, 2017],
+  ],
+  '47': [
+    [ORANGE, WHITE, BLACK, 2008, 2009],
+    [GREEN, WHITE, BLACK, 2010],
+    [WHITE, RED, BLACK, 2011],
+    [WHITE, SKY, BLACK, 2012],
+    [BLACK, REDORANGE, WHITE, 2020, 2022]
+  ],
+  '48': [
+    [WHITE, BLACK, RED, 2013],
+    [NAVY, BLACK, WHITE, 2016, 2017],
+    [YELLOW, RED, BLACK, 2021],
+    [WHITE, RED, BLACK, 2022],
+    [WHITE, ORANGE, BLACK, 2023, 2025],
+    [WHITE, NAVY, GREEN, 2026],
+  ],
+  '50': [
+    [WHITE, REDORANGE, BLACK, 2023, 2026]
+  ],
+  '51': [
+    [BLACK, WHITE, REDORANGE, 2011, 2013],
+    [BLACK, REDORANGE, WHITE, 2014, 2016],
+    [BLACK, WHITE, REDORANGE, 2017, 2020],
+    [BLUE, WHITE, BLACK, 2021, 2026]
+  ],
+  '52': [
+    [BLUE, WHITE, BLACK, 2008],
+    [WHITE, RED, BLACK, 2009],
+    [ORANGE, SKY, NAVY, 2011],
+    [WHITE, BLACK, SKY, 2012, 2017],
+    [ORANGE, WHITE, BLACK, 2018, 2019],
+    [BLACK, WHITE, RED, 2020, 2021],
+    [RED, YELLOW, BLACK, 2026]
+  ],
+  '53': [
+    [GREEN, WHITE, GOLD, 2011, 2013],
+    [SKY, WHITE, BLACK, 2022, 2025],
+    [WHITE, RED, BLACK, 2026],
+  ],
+  '54': [
+    [BLACK, WHITE, LIME, 2012, 2015],
+    [BLACK, WHITE, LIME, 2020, 2022],
+    [GOLD, WHITE, BLACK, 2025],
+    [GOLD, BLACK, WHITE, 2026],
+  ],
+  '55': [
+    [NAVY, NEON, BLACK, 2008],
+    [BLACK, ORANGE, WHITE, 2013, 2015],
+    [WHITE, BLACK, WHITE, 2026]
+  ],
+  '56': [
+    [WHITE, RED, BLACK, 2010]
+  ],
+  '59': [
+    [NAVY, YELLOW, RED, 2008]
+  ],
+  '60': [
+    [GREEN, BLACK, WHITE, 2008, 2009],
+    [BLUE, WHITE, BLACK, 2010, 2011],
+    [WHITE, RED, BLACK, 2012],
+    [MAGENTA, YELLOW, BLACK, 2013],
+    [RED, WHITE, BLACK, 2014, 2017],
+    [WHITE, RED, BLACK, 2018]
+  ],
+  '61': [
+    [WHITE, RED, BLACK, 2008, 2009],
+    [BLACK, RED, BLACK, 2010],
+    [WHITE, BLACK, WHITE, 2018],
+    [BLUE, WHITE, BLACK, 2019, 2021]
+  ],
+  '62': [
+    [BLACK, GOLD, RED, 2009, 2017]
+  ],
+  '64': [
+    [BLACK, WHITE, RED, 2008],
+    [SKY, WHITE, BLACK, 2011],
+  ],
+  '66': [
+    [BLACK, YELLOW, REDORANGE, 2008, 2011],
+    [BLUE, WHITE, BLACK, 2018, 2023]
+  ],
+  '67': [
+    [WHITE, RED, BLACK, 2011]
+  ],
+  '68': [
+    [BLACK, WHITE, MAGENTA, 2019, 2022]
+  ],
+  '70': [
+    [BLUE, REDORANGE, BLACK, 2008, 2009],
+    [WHITE, RED, BLACK, 2010],
+    [WHITE, BLACK, RED, 2011, 2013],
+    [WHITE, BLACK, GREEN, 2014],
+    [WHITE, ORANGE, BLACK, 2015],
+    [BLUE, WHITE, BLACK, 2016],
+    [BLACK, LIME, WHITE, 2025]
+  ],
+  '71': [
+    [WHITE, NAVY, SKY, 2025, 2026]
+  ],
+  '73': [
+    [BLUE, REDORANGE, WHITE, 2008],
+    [REDORANGE, WHITE, BLACK, 2009],
+    [BLACK, WHITE, REDORANGE, 2010]
+  ],
+  '74': [
+    [BLACK, REDORANGE, WHITE, 2011, 2026]
+  ],
+  '76': [
+    [WHITE, REDORANGE, BLACK, 2014],
+    [BLACK, WHITE, REDORANGE, 2018],
+    [WHITE, SILVER, NAVY, 2021],
+    [WHITE, NAVY, GREEN, 2025]
+  ],
+  '77' : [
+    [BLACK, RED, WHITE, 2013],
+    [ORANGE, WHITE, BLACK, 2021, 2022],
+    [BLUE, RED, WHITE, 2023]
+  ],
+  '78': [
+    [BLACK, NEON, GREEN, 2016, 2020],
+    [BLACK, WHITE, RED, 2021, 2022],
+    [SKY, WHITE, BLACK, 2023],
+    [BLACK, WHITE, RED, 2024]
+  ],
+  '79': [
+    [RED, YELLOW, BLACK, 2009, 2011],
+    [BLACK, WHITE, SKY, 2013],
+  ],
+  '80': [
+    [BLUE, WHITE, BLACK, 2009],
+    [BLUE, YELLOW, BLACK, 2014],
+    [BLACK, WHITE, SKY, 2013],
+  ],
+  '81': [
+    [WHITE, NAVY, RED, 2008, 2009],
+    [NAVY, YELLOW, BLACK, 2010],
+    [WHITE, NAVY, GOLD, 2011],
+    [RED, NAVY, WHITE, 2012],
+    [BLACK, WHITE, LIME, 2021],
+    [BLACK, RED, WHITE, 2024],
+  ],
+  '83': [
+    [BLACK, WHITE, ORANGE, 2008, 2010]
+  ],
+  '84': [
+    [BLACK, REDORANGE, BLACK, 2008, 2009],
+    [WHITE, RED, BLACK, 2014, 2015]
+  ],
+  '85': [
+    [WHITE, RED, BLACK, 2013, 2016]
+  ],
+  '85': [
+    [WHITE, RED, NAVY, 2016, 2019]
+  ],
+  '87': [
+    [WHITE, BLUE, BLACK, 2009, 2010],
+    [BLUE, WHITE, BLACK, 2011],
+    [BLACK, YELLOW, RED, 2012, 2016],
+    [YELLOW, RED, WHITE, 2024, 2026]
+  ],
+
+  '88': [
+    [WHITE, BLACK, WHITE, 2008],
+    [WHITE, RED, BLACK, 2009],
+    [BLACK, WHITE, RED, 2010, 2016],
+    [YELLOW, BLUE, BLACK, 2017, 2018],
+    [BLUE, WHITE, RED, 2022, 2026],
+  ],
+  '89': [
+    [GREEN, GOLD, BLACK, 2008, 2010],
+    [RED, GOLD, BLACK, 2011, 2012],
+    [PURPLE, GOLD, BLACK, 2013],
+    [BLACK, WHITE, RED, 2014, 2016],
+    [BLACK, GOLD, RED, 2017, 2019],
+    [WHITE, RED, WHITE, 2020]
+  ],
+  '90': [
+    [WHITE, REDORANGE, BLUE, 2008, 2010],
+    [BLACK, RED, YELLOW, 2014],
+    [NAVY, WHITE, REDORANGE, 2015, 2018],
+    [BLUE, WHITE, BLACK, 2019, 2020],
+    [RED, WHITE, BLACK, 2021]
+  ],
+  '91': [
+    [WHITE, BLUE, REDORANGE, 2008, 2010],
+    [BLACK, WHITE, ORANGE, 2021, 2022],
+    [YELLOW, BLACK, WHITE, 2023],
+    [BLACK, WHITE, SKY, 2024],
+    [WHITE, RED, BLACK, 2025, 2026]
+  ],
+  '92': [
+    [BLACK, WHITE, SKY, 2008],
+    [BLACK, WHITE, RED, 2009, 2010],
+    [PURPLE, WHITE, BLACK, 2013],
+    [NAVY, WHITE, REDORANGE, 2015, 2017],
+    [BLUE, WHITE, NAVY, 2018, 2026]
+  ],
+  '93': [
+    [YELLOW, BLACK, WHITE, 2014],
+    [BLACK, WHITE, RED, 2016, 2020],
+  ],
+  '96': [
+    [BLACK, WHITE, RED, 2009, 2010],
+    [WHITE, RED, BLACK, 2017],
+    [WHITE, ORANGE, BLACK, 2023],
+    [BLACK, SKY, WHITE, 2026]
+  ],
+  '97': [
+    [BLUE, WHITE, BLACK, 2010, 2014],
+    [WHITE, RED, BLACK, 2015, 2017],
+    [WHITE, RED, BLACK, 2024],
+  ],
+  '98': [
+    [WHITE, RED, BLACK, 2008],
+    [NEON, BLACK, WHITE, 2009, 2010],
+    [BLACK, WHITE, GOLD, 2012, 2013],
+    [YELLOW, WHITE, BLACK, 2014],
+    [WHITE, BLACK, BLUE, 2015, 2017],
+    [GREEN, WHITE, BLACK, 2018],
+    [ORANGE, WHITE, BLACK, 2019],
+    [BLUE, WHITE, BLACK, 2020],
+    [BLACK, WHITE, LIME, 2021, 2024]
+  ],
+
+  '99': [
+    [BLUE, WHITE, REDORANGE, 2008, 2009],
+    [SKY, WHITE, BLUE, 2010],
+    [BLACK, ORANGE, BLACK, 2011, 2012],
+    [BLACK, WHITE, RED, 2013, 2014],
+    [WHITE, RED, BLACK, 2017],
+    [BLACK, NEON, GREEN, 2018],
+    [WHITE, NEON, BLACK, 2019],
+    [BLACK, RED, WHITE, 2020, 2021],
+    [BLACK, WHITE, RED, 2022, 2023],
+    [WHITE, BLACK, RED, 2025],
+    [BLACK, LIME, SKY, 2026],
+  ],
+  '00': [
+    [WHITE, ORANGE, BLUE, 2008],
+    [BLUE, ORANGE, BLACK, 2010],
+    [BLACK, WHITE, RED, 2012, 2014],
+    [WHITE, RED, BLACK, 2017, 2024],
+    [YELLOW, RED, BLACK, 2025, 2026],
+  ],
+  '01': [
+    [WHITE, RED, BLACK, 2008, 2010],
+    [RED, WHITE, BLACK, 2011, 2016],
+    [RED, YELLOW, BLACK, 2017, 2019],
+  ],
+  '02': [
+    [SKY, NAVY, YELLOW, 2008, 2010],
+    [WHITE, RED, BLACK, 2020, 2022],
+    [SKY, YELLOW, NAVY, 2023],
+    [NAVY, WHITE, BLACK, 2026]
+  ],
+  '03': [
+    [BLACK, WHITE, REDORANGE, 2011, 2012]
+  ],
+  '04': [
+    [GOLD, RED, BLACK, 2010],
+    [NEON, BLACK, WHITE, 2011],
+  ],
+  '05': [
+    [RED, WHITE, BLACK, 2008, 2011],
+    [NEON, BLACK, WHITE, 2011],
+  ],
+  '07': [
+    [WHITE, ORANGE, BLACK, 2010, 2011],
+    [WHITE, BLUE, SKY, 2016, 2017],
+    [WHITE, RED, BLACK, 2019],
+    [BLUE, WHITE, RED, 2020],
+    [BLACK, WHITE, RED, 2021, 2024],
+    [BLACK, WHITE, YELLOW, 2025, 2026],
+  ],
+  '08': [
+    [BLACK, WHITE, SKY, 2012],
+    [YELLOW, RED, BLACK, 2019],
+    [BLACK, WHITE, RED, 2020],
+    [SKY, WHITE, BLUE, 2022],
+    [YELLOW, RED, BLACK, 2023]
+  ],
+  '09': [
+    [YELLOW, BLUE, WHITE, 2008, 2009],
+    [BLACK, WHITE, GOLD, 2010],
+    [WHITE, ORANGE, BLUE, 2011],
+    [SILVER, WHITE, GREEN, 2012],
+    [YELLOW, WHITE, BLACK, 2014],
+  ],
+};
+
 function schemeEntryMatchesSeason(entry, season){
   if(!Array.isArray(entry) || entry.length < 4 || season === null) return false;
   const from = Number(entry[3]);
@@ -791,7 +1643,7 @@ async function loadSeasonComparison(season=activeSeason()){
   if(!Number.isFinite(Number(season))) return;
   season = Number(season);
   try{
-    const res = await fetch(`/api/season_comparison/${season}?_=${Date.now()}`);
+    const res = await fetch(apiUrl(`/api/season_comparison/${season}?_=${Date.now()}`));
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     SEASON_COMPARISON_CACHE.set(season, await res.json());
   }catch(e){
@@ -803,7 +1655,8 @@ async function loadSeasonComparison(season=activeSeason()){
 function carScheme(car){
   const key = String(car);
   const season = activeSeason();
-  const raw = CAR_SCHEMES[key];
+  const schemes = series === 'oreilly' ? OREILLY_CAR_SCHEMES : CAR_SCHEMES;
+  const raw = schemes[key];
   if(!raw) return [BLACK, WHITE, BLACK];
 
   // Every scheme entry is season-ranged: [bg, color, outline, fromSeason, throughSeason].
@@ -921,14 +1774,14 @@ function updateTeamSelect(){
   if(teams.some(([t])=>t===old)) sel.value = old;
 }
 function sortValue(d, key){
-  if(key === 'rank') return Number(d.expected_finish);
+  if(key === 'rank') return predictionValue(d);
   if(key === 'car') return String(d.car).padStart(3, '0');
   if(key === 'driver') return driverName(d).toLowerCase();
   if(key === 'result') return (mode === 'last_race' || mode === 'historical') ? Number(d.actual_finish) : Number(d.starting_position);
   if(key === 'expected_finish') return Number(d.expected_finish);
+  if(key === 'prediction') return predictionValue(d);
   if(key === 'median_finish') return Number(d.median_finish ?? (d.pmf ? medianFromPmf(d.pmf) : NaN));
   if(key === 'win') return Number(d.win ?? cdfTop(d,1));
-  if(key === 'top10') return Number(d.top10 ?? cdfTop(d,10));
   return Number(d[key]);
 }
 function carTieKey(d){
@@ -947,15 +1800,15 @@ function compareDrivers(a,b,key=rankMode,dir=sortDir){
   let cmp = baseCompare(a,b,key,dir);
   if(cmp !== 0) return cmp;
 
-  // Tie-breakers: for median ties, prefer the better expected finish. For
-  // probability columns, prefer expected finish too after equal probabilities.
-  const tieKeys = key === 'expected_finish'
-    ? ['median_finish', 'win']
-    : ['expected_finish', 'median_finish'];
+  // The interpolated prediction normally eliminates median ties. Keep EV as
+  // a secondary fallback, followed by win probability and car number.
+  const tieKeys = key === 'prediction'
+    ? ['expected_finish', 'win']
+    : (key === 'expected_finish' ? ['prediction', 'win'] : ['prediction', 'expected_finish']);
 
   for(const tk of tieKeys){
     if(tk === key) continue;
-    const tdir = tk === 'win' || tk === 'top10' ? 'desc' : 'asc';
+    const tdir = tk === 'win' ? 'desc' : 'asc';
     cmp = baseCompare(a,b,tk,tdir);
     if(cmp !== 0) return cmp;
   }
@@ -974,7 +1827,7 @@ function setSort(key){
     sortDir = sortDir === 'asc' ? 'desc' : 'asc';
   }else{
     rankMode = key;
-    sortDir = (key === 'win' || key === 'top10') ? 'desc' : 'asc';
+    sortDir = key === 'win' ? 'desc' : 'asc';
   }
   render();
 }
@@ -1031,6 +1884,25 @@ function medianFromPmf(pmf){
   let acc=0; for(let i=0;i<pmf.length;i++){ acc += pmf[i]; if(acc>=0.5) return i+1; }
   return pmf.length;
 }
+function predictionFromPmf(pmf){
+  let before = 0;
+  for(let i=0;i<pmf.length;i++){
+    const bucket = Number(pmf[i]) || 0;
+    const after = before + bucket;
+    if(after >= 0.5){
+      if(bucket <= 0) return i + 1;
+      return Math.max(1, i + (0.5 - before) / bucket);
+    }
+    before = after;
+  }
+  return pmf.length;
+}
+function predictionValue(d){
+  const stored = Number(d.prediction);
+  if(Number.isFinite(stored)) return stored;
+  if(d.pmf && d.pmf.length) return predictionFromPmf(d.pmf);
+  return Number(d.median_finish);
+}
 function cdfTop(d, n){
   if(d.cdf && d.cdf.length) return d.cdf[Math.min(n-1,d.cdf.length-1)] || 0;
   if(d.pmf && d.pmf.length) return d.pmf.slice(0,n).reduce((a,b)=>a+b,0);
@@ -1078,15 +1950,14 @@ function render(){
   const showResult = showResultColumn();
   $('#rank-head').classList.toggle('has-start', showResult);
   $('#rank-head').innerHTML = showResult
-    ? `${sortableHead('#','rank')}${sortableHead('Car','car')}${sortableHead('Driver','driver')}${sortableHead(resultColumnLabel(),'result')}${sortableHead('Mean Exp','expected_finish')}${sortableHead('Median Exp','median_finish')}${sortableHead('Win %','win')}${sortableHead('Top 10 %','top10')}`
-    : `${sortableHead('#','rank')}${sortableHead('Car','car')}${sortableHead('Driver','driver')}${sortableHead('Mean Exp','expected_finish')}${sortableHead('Median Exp','median_finish')}${sortableHead('Win %','win')}${sortableHead('Top 10','top10')}`;
+    ? `${sortableHead('#','rank')}${sortableHead('Car','car')}${sortableHead('Driver','driver')}${sortableHead(resultColumnLabel(),'result')}${sortableHead('Prediction','prediction')}${sortableHead('EV','expected_finish')}${sortableHead('Win %','win')}`
+    : `${sortableHead('#','rank')}${sortableHead('Car','car')}${sortableHead('Driver','driver')}${sortableHead('Prediction','prediction')}${sortableHead('EV','expected_finish')}${sortableHead('Win %','win')}`;
   $('#rank-list').innerHTML=drivers.map((d,i)=>{
     const med = d.median_finish ?? (d.pmf ? medianFromPmf(d.pmf) : 0);
-    const top10 = d.top10 ?? cdfTop(d,10);
     const resultCell = showResult ? `<div class="subscore">${fmtResultCol(d)}</div>` : '';
     return `<div class="rank-row ${showResult?'has-start ':''}${selected.has(String(d.car))?'selected':''}" data-car="${d.car}">
       <div class="rank-num">${i+1}</div><div>${numberTile(d.car, 'small')}</div><div class="driver-name" title="${escapeHtml([d.manufacturer,d.team].filter(Boolean).join(' · '))}">${escapeHtml(driverName(d))}${limitedBadge(d)}</div>
-      ${resultCell}<div class="score">${Number(d.expected_finish||0).toFixed(1)}</div><div class="subscore">${Math.round(Number(med)||0)}</div><div class="subscore">${fmtP(d.win ?? cdfTop(d,1))}</div><div class="subscore">${fmtP(top10)}</div>
+      ${resultCell}<div class="score">${Math.round(Number(med)||0)}</div><div class="subscore">${Number(d.expected_finish||0).toFixed(1)}</div><div class="subscore">${fmtP(d.win ?? cdfTop(d,1))}</div>
     </div>`;
   }).join('');
   document.querySelectorAll('.rank-row').forEach(row=>row.onclick=(e)=>{
@@ -1095,6 +1966,7 @@ function render(){
     else { if(selected.size===1&&selected.has(car)) selected.clear(); else {selected.clear(); selected.add(car);} }
     render();
   });
+  renderPca();
   renderSide();
 }
 function marketRows(d){
@@ -1145,9 +2017,9 @@ function driverCard(d){
     ${limitedHistoryNotice(d)}
     <div class="stat-compact">
       ${(mode === 'last_race' || mode === 'historical') ? `<div class="label">Finish</div><div class="value">${fmtActual(d)}</div>` : ''}
-      <div class="label">Start</div><div class="value">${fmtStart(d)}</div>
-      <div class="label">Mean expected</div><div class="value">${Number(d.expected_finish||0).toFixed(1)}</div>
-      <div class="label">Median expected</div><div class="value">${Math.round(Number(med)||0)}</div>
+      ${(mode === 'last_race' || mode === 'historical' || activeData()?.meta?.mode_meta?.qualifying_available === true) ? `<div class="label">Start</div><div class="value">${fmtStart(d)}</div>` : ''}
+      <div class="label">Prediction</div><div class="value">${Math.round(Number(med)||0)}</div>
+      <div class="label">Expected value</div><div class="value">${Number(d.expected_finish||0).toFixed(1)}</div>
     </div>
     <div class="market-list">${marketBars(d)}</div>
   </div>`;
@@ -1190,6 +2062,7 @@ function compareCard(ds){
 }
 function baselineValue(d, key){
   if(key === 'expected_finish') return Number(d.expected_finish);
+  if(key === 'prediction') return predictionValue(d);
   if(key === 'median_finish') return Number(d.median_finish ?? (d.pmf ? medianFromPmf(d.pmf) : NaN));
   if(key === 'baseline_last10_p50_finish') return Number(d.baseline_last10_p50_finish);
   if(key === 'starting_position') return Number(d.starting_position);
@@ -1197,13 +2070,13 @@ function baselineValue(d, key){
   return NaN;
 }
 function completedScoreCard(){
-  if(!(mode === 'last_race' || mode === 'historical')) return '';
-  const ds = trackDrivers().filter(d => Number.isFinite(Number(d.actual_finish)));
+  const ds = trackDrivers();
   if(ds.length < 5) return '';
 
+  const qualifyingAvailable = activeData()?.meta?.mode_meta?.qualifying_available === true;
   const baselineDefs = [
-    {name:'Tyler', key:'expected_finish', isTyler:true},
-    {name:'Start Pos', key:'starting_position'},
+    {name:'Tyler', key:'prediction', isTyler:true},
+    ...(mode !== 'next_race' || qualifyingAvailable ? [{name:'Start Pos', key:'starting_position'}] : []),
     {name:'Last 10 Finish', key:'last10_median_finish', fallback:'baseline_last10_p50_finish'},
     {name:'Last 20 Finish', key:'last20_median_finish'},
     {name:'Last 36 Finish', key:'last36_median_finish'},
@@ -1218,41 +2091,62 @@ function completedScoreCard(){
     return v;
   }
 
-  function scoreBaseline(def){
+  function rankedBaseline(def){
     const eligible = ds.filter(d => Number.isFinite(valueFor(d, def)));
     if(eligible.length < 5) return null;
     const sorted = eligible.slice().sort((a,b) => {
       const cmp = valueFor(a, def) - valueFor(b, def);
       if(cmp !== 0) return cmp;
-      // Same value? Use the model's expected finish as the tie-breaker, then car number.
+      return compareDrivers(a,b,'expected_finish','asc');
+    });
+    return {name:def.name, isTyler:!!def.isTyler, cars:sorted.slice(0,10), n:eligible.length};
+  }
+
+  const rows = baselineDefs.map(rankedBaseline).filter(Boolean);
+  if(!rows.length) return '';
+
+  if(mode === 'next_race'){
+    return `<div class="card">
+      <div class="card-title"><b>Prediction Comparison</b><span>projected top 10</span></div>
+      <div class="prediction-rank">
+        ${rows.map((r,i)=>`<div>
+          <div class="prediction-rank-row">
+            <div class="prediction-rank-num">${i+1}.</div>
+            <div class="prediction-rank-name ${r.isTyler?'tyler':''}">${r.name}</div>
+            <div class="prediction-rank-score"></div>
+            <div class="prediction-rank-cars">${r.cars.map(d=>numberTile(d.car, 'tiny', true)).join('')}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="note">Scores and method rankings will appear after the race. For now, each row shows that method’s projected top 10. Start Position appears only after qualifying results are available.</div>
+    </div>`;
+  }
+
+  const completed = ds.filter(d => Number.isFinite(Number(d.actual_finish)));
+  if(completed.length < 5) return '';
+
+  const scoredRows = rows.map(r => {
+    const eligible = completed.filter(d => Number.isFinite(valueFor(d, baselineDefs.find(def => def.name === r.name))));
+    if(eligible.length < 5) return null;
+    const def = baselineDefs.find(def => def.name === r.name);
+    const sorted = eligible.slice().sort((a,b) => {
+      const cmp = valueFor(a, def) - valueFor(b, def);
+      if(cmp !== 0) return cmp;
       return compareDrivers(a,b,'expected_finish','asc');
     });
     const rank = Object.fromEntries(sorted.map((d,i) => [String(d.car), i + 1]));
     const score = eligible.reduce((acc,d) => acc + Math.abs(Number(d.actual_finish) - rank[String(d.car)]), 0) / eligible.length;
-    return {name:def.name, isTyler:!!def.isTyler, score, cars:sorted.slice(0,10), n:eligible.length};
-  }
+    return {...r, score, cars:sorted.slice(0,10)};
+  }).filter(Boolean);
 
-  const rows = baselineDefs.map(scoreBaseline).filter(Boolean);
-
-  // Expected MAE of a uniformly random permutation of this field.
-  // For n cars, E[|predicted rank - actual rank|] = (n² - 1) / (3n).
-  const randomN = ds.length;
+  const randomN = completed.length;
   if(randomN >= 2){
-    rows.push({
-      name:'Random',
-      isTyler:false,
-      isRandom:true,
-      score:(randomN * randomN - 1) / (3 * randomN),
-      cars:[],
-      n:randomN,
-    });
+    scoredRows.push({name:'Random', isTyler:false, isRandom:true, score:(randomN * randomN - 1) / (3 * randomN), cars:[], n:randomN});
   }
+  scoredRows.sort((a,b) => a.score - b.score);
+  if(scoredRows.length < 2) return '';
 
-  rows.sort((a,b) => a.score - b.score);
-  if(rows.length < 2) return '';
-
-  const actualTop10 = ds.slice().sort((a,b) => Number(a.actual_finish) - Number(b.actual_finish)).slice(0,10);
-
+  const actualTop10 = completed.slice().sort((a,b) => Number(a.actual_finish) - Number(b.actual_finish)).slice(0,10);
   return `<div class="card">
     <div class="card-title"><b>Prediction Comparison</b><span>MAE · lower is better</span></div>
     <div class="prediction-rank">
@@ -1264,7 +2158,7 @@ function completedScoreCard(){
           <div class="prediction-rank-cars">${actualTop10.map(d=>numberTile(d.car, 'tiny', true)).join('')}</div>
         </div>
       </div>
-      ${rows.map((r,i)=>`<div>
+      ${scoredRows.map((r,i)=>`<div>
         <div class="prediction-rank-row">
           <div class="prediction-rank-num">${i+1}.</div>
           <div class="prediction-rank-name ${r.isTyler?'tyler':''}">${r.name}</div>
@@ -1275,6 +2169,34 @@ function completedScoreCard(){
     </div>
     <div class="note">Score = mean absolute error between each method’s predicted rank and actual finish. Ties are broken by the model’s expected finish, then car number. Click any tiny car number to select that driver. Limited-history drivers are included; under-10 histories are padded with recent driver avg-position values, then team avg-position values, then start position if needed.</div>
   </div>`;
+}
+
+function renderPca(){
+  const data = activeData();
+  const panel = $('#pca-content');
+  const meta = $('#pca-meta');
+  const summary = data?.pca?.[track];
+  if(!summary || !Array.isArray(summary.components)){
+    meta.textContent = '—';
+    panel.innerHTML = '<div class="empty">Rebuild predictions to generate PCA component summaries.</div>';
+    return;
+  }
+  const observedVariables = summary.observed_variables ?? summary.raw_variables ?? summary.n_features ?? 133;
+  meta.innerHTML = `${observedVariables} observed variables<br>${summary.retained_components} principal components`;
+  panel.innerHTML = summary.components.map(c => {
+    const loadingText = (c.top_loadings||[]).map(x => `${x.feature} ${Number(x.loading)>=0?'+':''}${Number(x.loading).toFixed(2)}`).join(' · ');
+    const driverLimit = Number(c.component) === 1 ? 20 : 5;
+    const shownDrivers = (c.drivers||[]).slice(0, driverLimit);
+    const tiles = shownDrivers.map(x => `<div class="pca-driver-contribution" title="PC${c.component} improves car #${escapeHtml(x.car)} raw EV by ${Number(x.ev_help||0).toFixed(3)} positions before Sinkhorn">${numberTile(x.car, 'tiny', true)}<div class="pca-driver-ev">+${Number(x.ev_help||0).toFixed(2)}</div></div>`).join('');
+    return `<div class="pca-component">
+      <div class="pca-component-head">
+        <div class="pca-component-name">PC${c.component}</div>
+        <div class="pca-component-impact">avg |ΔEV| ${Number(c.mean_abs_help||0).toFixed(2)} · ${(100*Number(c.explained_variance||0)).toFixed(1)}%</div>
+      </div>
+      <div class="pca-driver-tiles">${tiles || '<span class="empty">No driver helped</span>'}</div>
+      <div class="pca-loadings">${escapeHtml(loadingText)}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderSide(){
@@ -1302,6 +2224,7 @@ function buildTrackButtons(){
   document.querySelectorAll('[data-track], [data-track-divider]').forEach(b=>b.remove());
 }
 $('#display-select').onchange=e=>{ displayMode=e.target.value; render(); };
+$('#series-select').onchange=e=>setSeries(e.target.value);
 $('#manufacturer-select').onchange=e=>{ if(e.target.value) selectManufacturer(e.target.value); };
 $('#team-select').onchange=e=>{ if(e.target.value) selectTeam(e.target.value); };
 $('#clear-selection').onclick=()=>{ selected.clear(); $('#manufacturer-select').value=''; $('#team-select').value=''; render(); };
@@ -1334,32 +2257,17 @@ const _origRender = render;
 const errMsg = '<div class="empty">Could not load prediction files. Run predict.py, then serve this folder with <code>python3 -m http.server 8000</code>.</div>';
 (async function boot(){
   try{
-    const st=await fetch('/api/status');
-    if(st.ok){const s=await st.json();if(Array.isArray(s.index))HIST_INDEX=s.index;}
-    populateHistoricalControls();
-    const[lr,nr]=await Promise.allSettled([
-      fetch('predictions_last_race.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}),
-      fetch('predictions_next_race.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}),
-    ]);
-    if(lr.status==='fulfilled')DATA_LAST=lr.value;
-    if(nr.status==='fulfilled')DATA_NEXT=nr.value;
+    $('#series-select').value='cup';
+    applySeriesTheme();
+    await loadSeriesData();
     if(!DATA_LAST&&!DATA_NEXT&&!HIST_INDEX.length){
       $('#rank-list').innerHTML='<div class="empty">No data yet — click <b>↻ Refresh data</b> in the toolbar to get started.</div>';
       return;
     }
-    mode=DATA_LAST?'last_race':(DATA_NEXT?'next_race':'historical');
-    const data=activeData();
-    if(data&&data.tracks)track=Object.keys(data.tracks)[0]||'s';
-    toggleHistoricalControls();
-    updateRunButton();
-    document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.id===`btn-${mode.replace('_','-')}`));
-    if(!DATA_LAST)$('#btn-last-race').disabled=true;
-    if(!DATA_NEXT)$('#btn-next-race').disabled=true;
-    if(!HIST_INDEX.length)$('#btn-historical').disabled=true;
-    await loadSeasonComparison(activeSeason());
     render();
   }catch(err){$('#rank-list').innerHTML=errMsg;console.error(err);}
 })();
+
 </script>
 </body>
 </html>

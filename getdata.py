@@ -5,8 +5,12 @@ import json
 import csv
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, date
+from pathlib import Path
 import argparse
+import os
+import random
+import time
 
 try:
     from playwright.sync_api import sync_playwright
@@ -19,11 +23,42 @@ except ImportError:
 RAW_START_YEAR = 2005
 SEASONS = range(RAW_START_YEAR, datetime.now().year + 1)
 RACES_PER_SEASON = 36
-MAX_WORKERS      = 12
+MAX_WORKERS      = 1
+DA_REQUEST_DELAY_MIN = 1.0
+DA_REQUEST_DELAY_MAX = 1.8
+FULL_SCRAPE_CHECKPOINT_EVERY = 10
+MAX_CONSECUTIVE_NETWORK_FAILURES = 3
 USE_RR_ENTRY_LIST = True
 RR_HEADLESS       = False  # headless=True is more likely to hit Cloudflare
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+SERIES_CONFIG = {
+    "cup": {"label": "Cup Series", "da_path": "nascar", "sked_digit": "0", "rr_code": "W"},
+    "oreilly": {"label": "O'Reilly Series", "da_path": "nascar_secondseries", "sked_digit": "5", "rr_code": "B"},
+}
+SERIES = "cup"
+SERIES_SUFFIX = ""
+RR_SERIES_CODE = "W"
+DA_SERIES_PATH = "nascar"
+SKED_SERIES_DIGIT = "0"
+FEATURE_CACHE_PATH = "feature_cache.json"
+
+def configure_series(series):
+    global SERIES, SERIES_SUFFIX, RR_SERIES_CODE, DA_SERIES_PATH, SKED_SERIES_DIGIT, FEATURE_CACHE_PATH
+    series = str(series or "cup").lower()
+    if series not in SERIES_CONFIG:
+        raise ValueError(f"Unknown series: {series}")
+    cfg = SERIES_CONFIG[series]
+    SERIES = series
+    SERIES_SUFFIX = "" if series == "cup" else f"_{series}"
+    RR_SERIES_CODE = cfg["rr_code"]
+    DA_SERIES_PATH = cfg["da_path"]
+    SKED_SERIES_DIGIT = cfg["sked_digit"]
+    FEATURE_CACHE_PATH = f"feature_cache{SERIES_SUFFIX}.json"
+
+def series_filename(stem, extension):
+    return f"{stem}{SERIES_SUFFIX}.{extension}"
 
 TRACK_TYPES = {
     "Daytona":                "ss",
@@ -59,9 +94,40 @@ TRACK_TYPES = {
     "Kentucky":               "s",
     "Chicagoland":            "s",
     "Iowa":                   "s",
+    "North Wilkesboro":       "s",
     "Mexico City":            "rc",
     "San Diego":              "rc",
+    # Tracks used by the national second series but not necessarily by Cup
+    # during the same period.
+    "Milwaukee":              "s",
+    "Pikes Peak":             "s",
+    "IRP":                    "s",
+    "Indianapolis Raceway Park": "s",
+    "Lucas Oil Indianapolis Raceway Park": "s",
+    "Memphis":                "s",
+    "Gateway":                "s",
+    "Nashville Superspeedway": "s",
+    "Montreal":               "rc",
+    "Circuit Gilles Villeneuve": "rc",
+    "Mid-Ohio":               "rc",
+    "Portland":               "rc",
 }
+
+TRACK_ALIASES = {
+    "The Milwaukee Mile": "Milwaukee",
+    "Pikes Peak International Raceway": "Pikes Peak",
+    "Indianapolis Raceway Park": "IRP",
+    "O'Reilly Raceway Park": "IRP",
+    "Lucas Oil Indianapolis Raceway Park": "IRP",
+    "Memphis Motorsports Park": "Memphis",
+    "Gateway International Raceway": "Gateway",
+    "World Wide Technology Raceway": "Gateway (WWT)",
+    "Nashville Superspeedway": "Nashville Superspeedway",
+    "Circuit Gilles Villeneuve": "Montreal",
+    "Mid-Ohio Sports Car Course": "Mid-Ohio",
+    "Portland International Raceway": "Portland",
+}
+
 
 def get_track_type(track_name, season):
     if track_name == "Atlanta" and season < 2022:
@@ -83,36 +149,85 @@ HIGHER_IS_BETTER_METRICS = {
 session = requests.Session()
 session.headers.update(HEADERS)
 
-def fetch_race(season, race_num):
-    """Fetch and parse one race page. Returns (season, race_num, track_name, drivers) or None."""
-    sked_id = f"{season}{race_num:03d}"
-    url = f"https://www.driveraverages.com/nascar/race.php?sked_id={sked_id}"
+def fetch_race(season, race_num, *, with_status=False):
+    """Fetch and parse one race page.
+
+    Normal callers receive the historical return value: either the parsed race
+    tuple or None. Full-scrape callers can request a status so connection
+    failures are distinguishable from ordinary empty/nonexistent race slots.
+    """
+    sked_id = f"{season}{SKED_SERIES_DIGIT}{race_num:02d}"
+    url = f"https://www.driveraverages.com/{DA_SERIES_PATH}/race.php?sked_id={sked_id}"
+
+    # Be gentle with the small upstream site. With MAX_WORKERS=1 this creates a
+    # real gap between every DriverAverages request instead of a burst.
+    time.sleep(random.uniform(DA_REQUEST_DELAY_MIN, DA_REQUEST_DELAY_MAX))
+
     try:
-        resp = session.get(url, timeout=15)
+        resp = session.get(url, timeout=(10, 20))
         if resp.status_code != 200:
-            return None
-    except Exception as e:
-        print(f"  Request error {sked_id}: {e}")
-        return None
+            status = "network_error" if resp.status_code in {403, 429, 500, 502, 503, 504} else "empty"
+            return (None, status) if with_status else None
+    except requests.RequestException as e:
+        print(f"  Request error {sked_id}: {e}", flush=True)
+        return (None, "network_error") if with_status else None
 
     soup = BeautifulSoup(resp.content, "html.parser")
     tables = soup.find_all("table")
     if len(tables) < 6:
-        return None
+        return (None, "empty") if with_status else None
 
-    # Identify track from page title or headings
+    # Identify the track from the page's explicit race heading / track field.
+    # Do this before dictionary substring matching so second-series-only tracks
+    # such as Milwaukee, Pikes Peak, IRP, and Memphis are not discarded.
     track_name = None
+    candidate_names = []
     for tag in soup.find_all(["title", "h1", "h2", "h3", "b", "strong"]):
-        text = tag.get_text(strip=True)
-        for t in TRACK_TYPES:
-            if t.lower() in text.lower():
-                track_name = t
-                break
-        if track_name:
+        text = clean_cell(tag.get_text(" ", strip=True))
+        match = re.search(r"Race Results:\s*(.+?)\s+-\s+", text, flags=re.I)
+        if match:
+            candidate_names.append(match.group(1).strip())
+
+    page_text = clean_cell(soup.get_text(" ", strip=True))
+
+    race_date = None
+    date_match = re.search(
+        r"Date:\s*(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+"
+        r"([A-Z][a-z]+\s+\d{1,2},\s+\d{4})",
+        page_text,
+        flags=re.I,
+    )
+    if date_match:
+        try:
+            race_date = datetime.strptime(date_match.group(1), "%B %d, %Y").date().isoformat()
+        except ValueError:
+            race_date = None
+
+    match = re.search(r"Race Track:\s*(.+?)\s+Date:", page_text, flags=re.I)
+    if match:
+        candidate_names.append(match.group(1).strip())
+
+    for candidate in candidate_names:
+        canonical = TRACK_ALIASES.get(candidate, candidate)
+        if canonical in TRACK_TYPES:
+            track_name = canonical
             break
+
+    # Fallback for pages whose heading format differs.
     if track_name is None:
-        print(f"  WARNING: no track identified for {sked_id}")
-        return None
+        for tag in soup.find_all(["title", "h1", "h2", "h3", "b", "strong"]):
+            text = tag.get_text(" ", strip=True)
+            for t in TRACK_TYPES:
+                if t.lower() in text.lower():
+                    track_name = t
+                    break
+            if track_name:
+                break
+
+    if track_name is None:
+        detail = f" candidates={candidate_names!r}" if candidate_names else ""
+        print(f"  WARNING: no track identified for {sked_id}.{detail}")
+        return (None, "parse_error") if with_status else None
 
     # --- Main results table (tables[2]) ---
     # Columns: Finish, Start, #, Driver, Make, Pts, Laps, Led, Status, Team, ...
@@ -234,22 +349,86 @@ def fetch_race(season, race_num):
             flush=True,
         )
 
-    return (season, race_num, track_name, results)
+    for stats in results.values():
+        stats["race_date"] = race_date
 
-def scrape_all():
+    result = (season, race_num, track_name, results)
+    return (result, "ok") if with_status else result
+
+def _load_checked_slots(path):
+    """Load full-scrape progress metadata from an existing raw cache."""
+    if not os.path.exists(path):
+        return set()
+    try:
+        with open(path) as f:
+            payload = json.load(f)
+        checked = payload.get("checked_slots", []) if isinstance(payload, dict) else []
+        out = set()
+        for value in checked:
+            year_s, race_s = str(value).split("-", 1)
+            out.add((int(year_s), int(race_s)))
+        return out
+    except Exception:
+        return set()
+
+
+def scrape_all(cache_path="raw_races_cache.json", raw=None):
+    """Resumable, rate-limited first-time scrape with frequent checkpoints."""
     jobs = [(s, r) for s in SEASONS for r in range(1, RACES_PER_SEASON + 1)]
-    raw  = {}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(fetch_race, s, r): (s, r) for s, r in jobs}
-        done = 0
-        for fut in as_completed(futures):
-            done += 1
-            result = fut.result()
-            if result is not None:
-                s, r, track, drivers = result
-                raw[(s, r)] = (track, drivers)
-            if done % 20 == 0:
-                print(f"  {done}/{len(jobs)} races scraped...")
+    raw = dict(raw or {})
+    checked = _load_checked_slots(cache_path)
+    pending = [job for job in jobs if job not in checked]
+
+    if checked:
+        print(
+            f"  Resuming full scrape: {len(checked)}/{len(jobs)} slots already checked, "
+            f"{len(raw)} completed races saved.",
+            flush=True,
+        )
+
+    consecutive_network_failures = 0
+    checked_this_run = 0
+
+    for season, race_num in pending:
+        result, status = fetch_race(season, race_num, with_status=True)
+
+        if status == "network_error":
+            consecutive_network_failures += 1
+            print(
+                f"  Network failure {consecutive_network_failures}/"
+                f"{MAX_CONSECUTIVE_NETWORK_FAILURES} at {season} race {race_num}.",
+                flush=True,
+            )
+            if consecutive_network_failures >= MAX_CONSECUTIVE_NETWORK_FAILURES:
+                save_raw_cache(raw, cache_path, checked_slots=checked)
+                message = (
+                    "DriverAverages is not accepting requests right now. "
+                    "Progress was saved; run Refresh later to resume from this exact point."
+                )
+                print(f"  {message}", flush=True)
+                raise RuntimeError(message)
+            # Do not mark a network failure as checked; retry it next run.
+            continue
+
+        consecutive_network_failures = 0
+        checked.add((season, race_num))
+        checked_this_run += 1
+
+        if result is not None:
+            s, r, track, drivers = result
+            raw[(s, r)] = (track, drivers)
+
+        total_checked = len(checked)
+        if checked_this_run % FULL_SCRAPE_CHECKPOINT_EVERY == 0:
+            save_raw_cache(raw, cache_path, checked_slots=checked)
+            print(
+                f"  {total_checked}/{len(jobs)} slots checked; "
+                f"{len(raw)} completed races saved...",
+                flush=True,
+            )
+
+    save_raw_cache(raw, cache_path, checked_slots=checked)
+    print(f"  Full scrape complete: {len(raw)} completed races saved.", flush=True)
     return raw
 
 
@@ -447,7 +626,7 @@ def scrape_rr_qualifying(season, race_num):
     Table layout: RANK | DRIVER | NBR | CAR | TIME | SPEED
     We want: qual[NBR] = RANK  (e.g. qual["97"] = 1)
     """
-    url = f"https://www.racing-reference.info/qual-results/{season}-{race_num:02d}/W"
+    url = f"https://www.racing-reference.info/qual-results/{season}-{race_num:02d}/{RR_SERIES_CODE}"
     print(f"Checking Racing-Reference qualifying: {url}")
 
     html, lines = _rr_page_html_and_text(url)
@@ -586,7 +765,7 @@ def scrape_rr_entry_list(season, race_num):
     Scrape Racing-Reference preliminary entry list.
     Returns list of {car_num, driver_name, manufacturer, team}.
     """
-    url = f"https://www.racing-reference.info/entrylist/{season}-{race_num:02d}/W"
+    url = f"https://www.racing-reference.info/entrylist/{season}-{race_num:02d}/{RR_SERIES_CODE}"
     print(f"Checking Racing-Reference entry list: {url}")
 
     html, lines = _rr_page_html_and_text(url)
@@ -690,17 +869,10 @@ def scrape_rr_entry_list(season, race_num):
 
 
 
-def scrape_driveraverages_schedule(season):
-    """
-    Scrape DriverAverages year page schedule sidebar.
-    Returns dict: race_num -> track_name.
-
-    Example:
-      {17: "San Diego", 18: "Sonoma"}
-    """
-    url = f"https://www.driveraverages.com/nascar/year.php?yr_id={season}"
+def scrape_driveraverages_schedule_details(season):
+    """Return race_num -> {track_name, race_date} from the selected series schedule."""
+    url = f"https://www.driveraverages.com/{DA_SERIES_PATH}/year.php?yr_id={season}"
     print(f"Checking DriverAverages schedule: {url}")
-
     try:
         resp = session.get(url, timeout=15)
         if resp.status_code != 200:
@@ -711,41 +883,45 @@ def scrape_driveraverages_schedule(season):
         return {}
 
     soup = BeautifulSoup(resp.content, "html.parser")
-    text = soup.get_text("\n", strip=True)
-    lines = [clean_cell(x) for x in text.splitlines() if clean_cell(x)]
-
+    lines = [clean_cell(x) for x in soup.get_text("\n", strip=True).splitlines() if clean_cell(x)]
     schedule = {}
     in_schedule = False
+    label_tokens = ("Cup Series Schedule", "O'Reilly Series Schedule", "Xfinity Series Schedule", "Nationwide Series Schedule", "Busch Series Schedule")
 
     for line in lines:
-        if line == f"{season} Cup Series Schedule":
+        if str(season) in line and any(token in line for token in label_tokens):
             in_schedule = True
             continue
-
         if in_schedule and line in {"Averages by Track", "Averages by NASCAR Driver"}:
             break
-
         if not in_schedule:
             continue
 
-        # Example lines:
-        #   Feb 15 - Daytona
-        #   Feb 22 - Atlanta (EchoPark)
-        m = re.match(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+-\s+(.+)$", line)
-        if not m:
+        match = re.match(r"^([A-Z][a-z]{2})\s+(\d{1,2})\s+-\s+(.+)$", line)
+        if not match:
             continue
-
-        track = clean_cell(m.group(1))
-        # Atlanta (EchoPark) -> Atlanta
-        track = re.sub(r"\s+\([^)]*\)$", "", track).strip()
-        schedule[len(schedule) + 1] = track
+        month, day, track = match.groups()
+        track = re.sub(r"\s+\([^)]*\)$", "", clean_cell(track)).strip()
+        canonical = TRACK_ALIASES.get(track, track)
+        try:
+            race_date = datetime.strptime(f"{month} {day} {season}", "%b %d %Y").date().isoformat()
+        except ValueError:
+            race_date = None
+        schedule[len(schedule) + 1] = {"track_name": canonical, "race_date": race_date}
 
     if schedule:
         print(f"  Found {len(schedule)} scheduled races.")
     else:
         print("  Could not parse DriverAverages schedule.")
-
     return schedule
+
+
+def scrape_driveraverages_schedule(season):
+    """Compatibility wrapper returning race_num -> track_name."""
+    return {
+        race_num: details.get("track_name")
+        for race_num, details in scrape_driveraverages_schedule_details(season).items()
+    }
 
 
 def fallback_start_pos(history, track_type=None):
@@ -844,10 +1020,7 @@ def build_features(history, target_track_type, start_pos=None, min_history=0):
 # Build datasets
 # ---------------------------------------------------------------------------
 
-FEATURE_CACHE_VERSION = 14
-FEATURE_CACHE_PATH = "feature_cache.json"
-
-
+FEATURE_CACHE_VERSION = 15
 def _race_key_str(key):
     return f"{int(key[0])}-{int(key[1]):02d}"
 
@@ -1153,6 +1326,7 @@ def _history_row(stats, track_type, season, driver=None):
         "pct_laps_led":       stats.get("pct_laps_led"),
         "track_type": track_type,
         "season":     season,
+        "race_date": stats.get("race_date"),
         "driver":     driver or "",
         "car_num":    str(stats.get("car_num", "")).strip(),
         "team":       team,
@@ -1354,6 +1528,117 @@ def training_keys_for_target(race_keys, target_key):
     ]
 
 
+
+def _race_date_from_drivers(drivers):
+    """Return an ISO race date stored on the race's driver rows."""
+    for stats in (drivers or {}).values():
+        value = stats.get("race_date")
+        if value:
+            try:
+                return datetime.fromisoformat(str(value)).date()
+            except ValueError:
+                continue
+    return None
+
+
+def race_date_for_key(raw, key):
+    race = raw.get(key)
+    return _race_date_from_drivers(race[1]) if race else None
+
+
+def _other_series(series=None):
+    current = str(series or SERIES).lower()
+    return "oreilly" if current == "cup" else "cup"
+
+
+def _load_feature_cache_file(path):
+    """Load a completed feature cache directly without changing global series state."""
+    try:
+        with open(path) as f:
+            cache = json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        raise RuntimeError(f"Could not read {path}: {e}") from e
+    if cache.get("version") != FEATURE_CACHE_VERSION:
+        raise RuntimeError(
+            f"{path} is from an older feature-cache version. Refresh that series once first."
+        )
+    return cache
+
+
+def _cached_rows(cache, raw, target_date=None):
+    """Flatten cached labeled rows, optionally keeping only races before a date."""
+    rows = []
+    training_by_race = cache.get("training_by_race", {})
+    for key_text in cache.get("race_keys", []):
+        try:
+            season_text, race_text = str(key_text).split("-", 1)
+            key = (int(season_text), int(race_text))
+        except (TypeError, ValueError):
+            continue
+        if target_date is not None:
+            race_date = race_date_for_key(raw, key)
+            if race_date is None or race_date >= target_date:
+                continue
+        for raw_row in training_by_race.get(key_text, []):
+            rows.append(_row_from_json(raw_row))
+    return rows
+
+
+
+
+def _cached_dated_rows(cache, raw):
+    """Return (race_date, row) pairs from an existing feature cache."""
+    output = []
+    training_by_race = cache.get("training_by_race", {})
+    for key_text in cache.get("race_keys", []):
+        try:
+            season_text, race_text = str(key_text).split("-", 1)
+            key = (int(season_text), int(race_text))
+        except (TypeError, ValueError):
+            continue
+        race_date = race_date_for_key(raw, key)
+        if race_date is None:
+            continue
+        output.extend((race_date, _row_from_json(raw_row)) for raw_row in training_by_race.get(key_text, []))
+    return output
+
+def _combined_cached_training_rows(selected_raw, selected_cache, target_date=None):
+    """Pool existing Cup + O'Reilly feature-cache rows without rebuilding features.
+
+    ``target_date=None`` means use every completed cached race, which is the
+    correct and fastest behavior for a current next-race prediction.
+    """
+    other = _other_series()
+    other_suffix = "" if other == "cup" else f"_{other}"
+    other_raw_path = f"raw_races_cache{other_suffix}.json"
+    other_feature_path = f"feature_cache{other_suffix}.json"
+    other_raw = load_raw_cache(other_raw_path)
+    if not other_raw:
+        raise FileNotFoundError(
+            f"{other_raw_path} is required for combined Cup + O'Reilly training. "
+            "Run Refresh once so both series caches exist."
+        )
+    other_cache = _load_feature_cache_file(other_feature_path)
+    if other_cache is None:
+        raise FileNotFoundError(
+            f"{other_feature_path} is required for fast combined training. "
+            f"Refresh the {other} series once first."
+        )
+
+    rows = _cached_rows(selected_cache, selected_raw, target_date)
+    rows.extend(_cached_rows(other_cache, other_raw, target_date))
+    if target_date is None:
+        print(f"  Combined-series training: all completed cached races — {len(rows)} rows.", flush=True)
+    else:
+        print(
+            f"  Combined-series cutoff: before {target_date.isoformat()} — {len(rows)} rows.",
+            flush=True,
+        )
+    return rows
+
+
 def build_datasets(raw):
     print('Building training/testing datasets...', flush=True)
     race_keys = sorted(raw.keys())
@@ -1459,9 +1744,23 @@ def build_datasets(raw):
     # "Next race" testing set
     # -----------------------------------------------------------------------
     print(f'Fetching schedule for {target_season}...', flush=True)
-    schedule = scrape_driveraverages_schedule(target_season)
-    target_track_name = schedule.get(target_race_num)
+    schedule_details = scrape_driveraverages_schedule_details(target_season)
+    target_details = schedule_details.get(target_race_num, {})
+    target_track_name = target_details.get("track_name")
+    target_race_date_text = target_details.get("race_date")
+    target_race_date = datetime.fromisoformat(target_race_date_text).date() if target_race_date_text else None
     target_track_type = get_track_type(target_track_name, target_season) if target_track_name else None
+
+    # Next Race can use every completed cached observation. No calendar scan is
+    # needed because an unfinished target race cannot already be in either raw cache.
+    training = _combined_cached_training_rows(raw, cache)
+
+    # Reconstructing the previous race still needs an exact calendar cutoff,
+    # but it now filters already-built cache rows instead of rebuilding features.
+    latest_race_date = race_date_for_key(raw, latest_key)
+    if latest_race_date is None:
+        raise ValueError("Latest race date is missing; cannot rebuild the last-race prediction safely.")
+    last_race_training = _combined_cached_training_rows(raw, cache, latest_race_date)
 
     if target_track_name:
         print(f"Next race appears to be: {target_track_name} ({target_track_type or 'unknown type'})")
@@ -1472,8 +1771,8 @@ def build_datasets(raw):
     qual_positions = {}
     entry_list_available = False
     qualifying_available = False
-    qualifying_url = f"https://www.racing-reference.info/qual-results/{target_season}-{target_race_num:02d}/W"
-    entry_list_url = f"https://www.racing-reference.info/entrylist/{target_season}-{target_race_num:02d}/W"
+    qualifying_url = f"https://www.racing-reference.info/qual-results/{target_season}-{target_race_num:02d}/{RR_SERIES_CODE}"
+    entry_list_url = f"https://www.racing-reference.info/entrylist/{target_season}-{target_race_num:02d}/{RR_SERIES_CODE}"
 
     if USE_RR_ENTRY_LIST and target_race_num <= RACES_PER_SEASON:
         print(f'Fetching qualifying for {target_season} race {target_race_num}...', flush=True)
@@ -1548,12 +1847,14 @@ def build_datasets(raw):
                 "season":     latest_season,
                 "race_num":   latest_race_num,
                 "track_name": latest_track_name,
+                "race_date": latest_race_date.isoformat() if latest_race_date else None,
             },
             "target_race": {
                 "season":     target_season,
                 "race_num":   target_race_num,
                 "track_name": target_track_name,
                 "track_type": target_track_type,
+                "race_date": target_race_date.isoformat() if target_race_date else None,
             },
             "training_window": {
                 "window_years": None,
@@ -1654,6 +1955,9 @@ def build_datasets_for_race(raw, target_season, target_race_num):
     target_track_type = get_track_type(target_track_name, int(target_season))
     if target_track_type is None:
         raise ValueError(f"Unknown track type for {target_track_name!r} in {target_season}-{target_race_num}.")
+    target_race_date = race_date_for_key(raw, target_key)
+    if target_race_date is None:
+        raise ValueError(f"Race date missing for {target_season}-{target_race_num}; refresh data to backfill dates.")
 
     # Pre-compute which drivers appeared in each season, but only using races
     # before the target race so the same-season current race cannot leak in.
@@ -1762,6 +2066,13 @@ def build_datasets_for_race(raw, target_season, target_race_num):
     if skipped:
         print(f"  Historical {target_season}-{target_race_num}: skipped {len(skipped)} drivers because features could not be built.")
 
+    # Reuse the selected series feature cache, then pool it with the other
+    # series cache using the historical race date as the strict cutoff.
+    selected_cache = _prepare_feature_cache(raw)
+    training = _combined_cached_training_rows(raw, selected_cache, target_race_date)
+    testing["_meta"]["race"]["race_date"] = target_race_date.isoformat()
+    testing["_meta"]["training_cutoff"] = {"before_date": target_race_date.isoformat()}
+    testing["_meta"]["training_window"]["end_before"] = target_race_date.isoformat()
     return training, testing
 
 
@@ -1887,6 +2198,17 @@ def build_datasets_for_season(raw, target_season):
     # Keep the season alongside each row while accumulating all training data from 2005 onward.
     accumulated_training = []
     outputs = []
+    selected_cache = _prepare_feature_cache(raw)
+    selected_dated_rows = _cached_dated_rows(selected_cache, raw)
+    other = _other_series()
+    other_suffix = "" if other == "cup" else f"_{other}"
+    other_raw = load_raw_cache(f"raw_races_cache{other_suffix}.json")
+    if not other_raw:
+        raise FileNotFoundError(f"raw_races_cache{other_suffix}.json is required for combined-series historical training.")
+    other_cache = _load_feature_cache_file(f"feature_cache{other_suffix}.json")
+    if other_cache is None:
+        raise FileNotFoundError(f"feature_cache{other_suffix}.json is required for combined-series historical training.")
+    other_dated_rows = _cached_dated_rows(other_cache, other_raw)
 
     for key in race_keys:
         season, race_num = key
@@ -1907,7 +2229,14 @@ def build_datasets_for_season(raw, target_season):
                 driver_history,
                 team_history,
             )
-            training_rows = [row for _, row in accumulated_training]
+            target_date = race_date_for_key(raw, key)
+            if target_date is None:
+                raise ValueError(f"Race date missing for {season}-{race_num}; refresh data to backfill dates.")
+            training_rows = [row for d, row in selected_dated_rows if d < target_date]
+            training_rows.extend(row for d, row in other_dated_rows if d < target_date)
+            testing["_meta"]["race"]["race_date"] = target_date.isoformat()
+            testing["_meta"]["training_cutoff"] = {"before_date": target_date.isoformat()}
+            testing["_meta"]["training_window"]["end_before"] = target_date.isoformat()
             outputs.append((race_num, training_rows, testing))
 
         # Build this race's training observations using only pre-race history,
@@ -1964,6 +2293,29 @@ def load_raw_cache(path="raw_races_cache.json"):
 
 
 
+
+def backfill_missing_race_dates(raw):
+    """One-time cache upgrade: re-fetch races whose stored rows lack race_date."""
+    missing_keys = [
+        key for key, (_, drivers) in raw.items()
+        if drivers and _race_date_from_drivers(drivers) is None
+    ]
+    if not missing_keys:
+        return raw, 0
+
+    print(f"  Backfilling race dates for {len(missing_keys)} cached races (one-time upgrade)...", flush=True)
+    updated = 0
+    for done, (season, race_num) in enumerate(missing_keys, 1):
+        result = fetch_race(season, race_num)
+        if result is not None:
+            _, _, track, drivers = result
+            raw[(season, race_num)] = (track, drivers)
+            updated += 1
+        if done % 20 == 0 or done == len(missing_keys):
+            print(f"    Race dates checked {done}/{len(missing_keys)}; updated {updated} races...", flush=True)
+    return raw, updated
+
+
 def backfill_missing_lap_metrics(raw):
     """Re-scrape cached races once when the new lap-percentage fields are absent."""
     missing_keys = []
@@ -2004,16 +2356,32 @@ def scrape_incremental(cache_path="raw_races_cache.json"):
     Typical run: 1-2 fetches maximum.
     """
     raw = load_raw_cache(cache_path)
+    checked_slots = _load_checked_slots(cache_path)
+    expected_slot_count = len(SEASONS) * RACES_PER_SEASON
+
+    # A checkpointed first scrape may already contain many completed races but
+    # still be unfinished. Resume it before treating the cache as incremental.
+    if checked_slots and len(checked_slots) < expected_slot_count:
+        print(
+            f"  Partial full-scrape cache detected: {len(checked_slots)}/"
+            f"{expected_slot_count} slots checked. Resuming...",
+            flush=True,
+        )
+        return scrape_all(cache_path, raw=raw)
 
     if not raw:
         print("  No cache — full scrape (one-time, more if backfilling to 2005)...")
-        raw = scrape_all()
-        save_raw_cache(raw, cache_path)
+        raw = scrape_all(cache_path, raw=raw)
         return raw
 
     raw, backfill_count = backfill_missing_early_races(raw)
     if backfill_count:
         print(f"  Backfilled {backfill_count} older race(s). Saving cache.", flush=True)
+        save_raw_cache(raw, cache_path)
+
+    raw, race_date_count = backfill_missing_race_dates(raw)
+    if race_date_count:
+        print(f"  Added race dates to {race_date_count} cached race(s). Saving cache.", flush=True)
         save_raw_cache(raw, cache_path)
 
     raw, lap_metric_count = backfill_missing_lap_metrics(raw)
@@ -2054,18 +2422,31 @@ def scrape_incremental(cache_path="raw_races_cache.json"):
     return raw
 
 
-def save_raw_cache(raw, path="raw_races_cache.json"):
-    """Save scraped raw races so historical predictions can slice cached data without scraping."""
+def save_raw_cache(raw, path="raw_races_cache.json", checked_slots=None):
+    """Atomically save races plus resumable full-scrape progress metadata."""
+    if checked_slots is None:
+        checked_slots = _load_checked_slots(path)
+
     payload = {
         "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "checked_slots": [
+            f"{int(season)}-{int(race_num):02d}"
+            for season, race_num in sorted(checked_slots)
+        ],
         "races": {
             f"{int(k[0])}-{int(k[1]):02d}": [track, drivers]
             for k, (track, drivers) in sorted(raw.items())
         },
     }
-    with open(path, "w") as f:
+
+    destination = Path(path)
+    temp_path = destination.with_suffix(destination.suffix + ".tmp")
+    with open(temp_path, "w") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
-    print(f"Saved raw race cache to {path}.")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp_path, destination)
+    print(f"Saved raw race cache to {path}.", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2083,6 +2464,12 @@ def write_training_csv(path, rows):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--series", choices=sorted(SERIES_CONFIG), default="cup")
+    parser.add_argument(
+        "--scrape-only",
+        action="store_true",
+        help="Refresh this series raw cache without building model datasets.",
+    )
     parser.add_argument(
         "--historical",
         nargs=2,
@@ -2091,34 +2478,34 @@ if __name__ == "__main__":
         help="Build a no-lookahead dataset for one completed historical race.",
     )
     args = parser.parse_args()
+    configure_series(args.series)
 
+    print(f"Series: {SERIES_CONFIG[SERIES]['label']}")
     print("Checking for new completed races (incremental)...")
-    raw = scrape_incremental()
+    raw = scrape_incremental(series_filename("raw_races_cache", "json"))
     print(f"Cache now has {len(raw)} completed races.")
+
+    if args.scrape_only:
+        print("Scrape-only refresh complete.")
+        raise SystemExit(0)
 
     if args.historical:
         year, race_num = args.historical
         print(f"Building historical dataset for {year} race {race_num}...")
         training_historical, testing_historical = build_datasets_for_race(raw, year, race_num)
         print(f"{len(training_historical)} historical training rows.")
-        write_training_csv("training_historical.csv", training_historical)
-        with open("testing_historical.json", "w") as f:
+        write_training_csv(series_filename("training_historical", "csv"), training_historical)
+        with open(series_filename("testing_historical", "json"), "w") as f:
             json.dump(testing_historical, f, indent=2)
         print("Done. Wrote training_historical.csv and testing_historical.json.")
     else:
-        print("Building datasets...")
-        training, last_race_training, last_race_testing, next_race_testing = build_datasets(raw)
+        print("Building next-race dataset...")
+        training, _last_race_training, _last_race_testing, next_race_testing = build_datasets(raw)
 
         print(f"{len(training)} next-race training rows.")
-        print(f"{len(last_race_training)} last-race training rows.")
+        write_training_csv(series_filename("training", "csv"), training)
 
-        write_training_csv("training.csv", training)
-        write_training_csv("training_last_race.csv", last_race_training)
-
-        with open("testing_last_race.json", "w") as f:
-            json.dump(last_race_testing, f, indent=2)
-
-        with open("testing_next_race.json", "w") as f:
+        with open(series_filename("testing", "json"), "w") as f:
             json.dump(next_race_testing, f, indent=2)
 
-        print("Done. Wrote training.csv, training_last_race.csv, testing_last_race.json, testing_next_race.json.")
+        print(f"Done. Wrote {series_filename('training', 'csv')} and {series_filename('testing', 'json')}.")

@@ -6,12 +6,30 @@ from pathlib import Path
 import numpy as np
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 TRACKS = ["s", "ss", "rc"]
 TRACK_LABELS = {"s": "Speedway", "ss": "Superspeedway", "rc": "Road Course"}
+
+SERIES_CONFIG = {"cup": "Cup Series", "oreilly": "O'Reilly Series"}
+SERIES = "cup"
+SERIES_SUFFIX = ""
+HISTORICAL_DIR = Path("predictions_historical") / "cup"
+
+def configure_series(series):
+    global SERIES, SERIES_SUFFIX, HISTORICAL_DIR
+    series = str(series or "cup").lower()
+    if series not in SERIES_CONFIG:
+        raise ValueError(f"Unknown series: {series}")
+    SERIES = series
+    SERIES_SUFFIX = "" if series == "cup" else f"_{series}"
+    HISTORICAL_DIR = Path("predictions_historical") / SERIES
+
+def series_filename(stem, extension):
+    return f"{stem}{SERIES_SUFFIX}.{extension}"
 
 # Fallback only. Normal prediction jobs use the actual target field size
 # (number of cars in the race being predicted).
@@ -166,6 +184,7 @@ def train_models(X, y, track_types, track_types_to_train=None):
 
         model = make_pipeline(
             StandardScaler(),
+            PCA(n_components=0.95, svd_solver="full"),
             LogisticRegression(**MODEL_PARAMS)
         )
         model.fit(X[mask], y[mask])
@@ -243,8 +262,21 @@ def summarize_driver(car, driver_info, track_type, pmf, cdf, field_size):
     field_size = int(field_size or len(pmf) or DEFAULT_FIELD_SIZE)
     positions = np.arange(1, field_size + 1)
 
-    expected    = float(np.sum(positions * pmf))
-    median      = float(np.searchsorted(cdf, 0.5) + 1)
+    expected = float(np.sum(positions * pmf))
+
+    # Integer median for display, plus a linearly interpolated median for
+    # precise ordering within the finishing-position bucket where the CDF
+    # crosses 50%. Example: if F(15)=0.49 and F(16)=0.505, prediction=15.667.
+    median_index = int(np.searchsorted(cdf, 0.5))
+    median = float(median_index + 1)
+    cdf_before = float(cdf[median_index - 1]) if median_index > 0 else 0.0
+    bucket_probability = float(pmf[median_index]) if median_index < len(pmf) else 0.0
+    if bucket_probability > 0:
+        fraction_into_bucket = (0.5 - cdf_before) / bucket_probability
+        prediction = float(max(1.0, median_index + fraction_into_bucket))
+    else:
+        prediction = median
+
     driver_name = driver_info.get("driver_name", f"#{car}")
 
     features = driver_info.get("features") or []
@@ -370,6 +402,7 @@ def summarize_driver(car, driver_info, track_type, pmf, cdf, field_size):
 
         "expected_finish": expected,
         "median_finish":   median,
+        "prediction":      prediction,
 
         "field_size": field_size,
 
@@ -391,6 +424,83 @@ def car_sort_key(z):
     return (0, int(z)) if z.isdigit() else (1, z)
 
 
+
+
+def build_pca_summary(model, raw_features, cars, top_components=8, max_top_drivers=20):
+    """Return per-driver raw expected-finish contributions for each PCA component.
+
+    For each retained component, predict every driver normally, then predict
+    them again with only that component set to its neutral PCA value of zero.
+    A positive contribution means the driver's actual component value improves
+    their raw model expected finish:
+
+        contribution = neutral_component_EV - actual_EV
+
+    These values are calculated before Sinkhorn balancing so they isolate the
+    direct model effect of the component on that driver rather than field-wide
+    probability redistribution.
+    """
+    scaler = model.named_steps["standardscaler"]
+    pca = model.named_steps["pca"]
+    clf = model.named_steps["logisticregression"]
+
+    standardized = scaler.transform(raw_features)
+    scores = pca.transform(standardized)
+    classes = np.asarray(clf.classes_, dtype=float)
+
+    normal_probs = clf.predict_proba(scores)
+    normal_expected = normal_probs @ classes
+
+    components = []
+    for index in range(scores.shape[1]):
+        neutral_scores = scores.copy()
+        neutral_scores[:, index] = 0.0
+        neutral_probs = clf.predict_proba(neutral_scores)
+        neutral_expected = neutral_probs @ classes
+
+        # Positive = this driver's real value on the component lowers EV,
+        # meaning it helps the driver's predicted finishing position.
+        contributions = neutral_expected - normal_expected
+        positive_order = [
+            int(j) for j in np.argsort(-contributions)
+            if contributions[j] > 1e-9
+        ][:min(max_top_drivers, len(cars))]
+
+        loading_order = np.argsort(-np.abs(pca.components_[index]))[:3]
+        top_loadings = [
+            {"feature": f"x{int(j)}", "loading": float(pca.components_[index, j])}
+            for j in loading_order
+        ]
+
+        positive_values = contributions[contributions > 1e-9]
+        mean_abs_help = float(np.mean(np.abs(contributions))) if len(contributions) else 0.0
+        components.append({
+            "component": int(index + 1),
+            "explained_variance": float(pca.explained_variance_ratio_[index]),
+            "top_loadings": top_loadings,
+            "max_driver_help": float(np.max(positive_values)) if len(positive_values) else 0.0,
+            "mean_positive_help": float(np.mean(positive_values)) if len(positive_values) else 0.0,
+            "mean_abs_help": mean_abs_help,
+            "drivers": [
+                {
+                    "car": str(cars[j]),
+                    "ev_help": float(contributions[j]),
+                    "pc_score": float(scores[j, index]),
+                }
+                for j in positive_order
+            ],
+        })
+
+    # Rank components by their typical field-wide influence, not by a single
+    # outlier driver. Absolute values count both helpful and harmful movement.
+    components.sort(key=lambda item: item["mean_abs_help"], reverse=True)
+    return {
+        "retained_components": int(pca.n_components_),
+        "retained_variance": float(np.sum(pca.explained_variance_ratio_)),
+        "contribution_basis": "raw model EV before Sinkhorn; component neutralized to zero",
+        "components": components[:min(top_components, len(components))],
+    }
+
 def predict_field(models, testing, mode_meta):
     """Run batched, field-balanced predictions for all target drivers."""
     mode = mode_meta.get("mode", "next_race")
@@ -409,7 +519,7 @@ def predict_field(models, testing, mode_meta):
 
     output = {
         "meta": {
-            "model": "fast regularized multinomial logistic regression + Sinkhorn",
+            "model": "standardized PCA (95% variance) + regularized multinomial logistic regression + Sinkhorn",
             "field_size": field_size,
             "max_finish": field_size,
             "tracks": TRACK_LABELS,
@@ -433,6 +543,7 @@ def predict_field(models, testing, mode_meta):
         features = clean_feature_array(np.asarray([testing[car]["features"] for car in cars], dtype=float))
         pmfs = predict_pmfs_batch(models[tt], features, field_size)
 
+        output.setdefault("pca", {})[tt] = build_pca_summary(models[tt], features, cars)
         output["tracks"][tt] = {}
         for car, pmf in zip(cars, pmfs):
             cdf = np.cumsum(pmf)
@@ -449,6 +560,28 @@ def predict_field(models, testing, mode_meta):
 
     return output
 
+def _json_safe(value):
+    """Recursively convert NumPy values and non-finite floats to valid JSON."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    return value
+
+
+def _write_json(payload, output_path):
+    safe_payload = _json_safe(payload)
+    with open(output_path, "w") as f:
+        json.dump(safe_payload, f, indent=2, allow_nan=False)
+    return safe_payload
+
+
 def write_predictions(input_training, input_testing, output_path):
     with open(input_testing) as f:
         testing = json.load(f)
@@ -462,13 +595,10 @@ def write_predictions(input_training, input_testing, output_path):
 
     preds = predict_field(models, testing, meta)
 
-    with open(output_path, "w") as f:
-        json.dump(preds, f, indent=2)
+    preds = _write_json(preds, output_path)
     print(f"Wrote {output_path}", flush=True)
     return preds
 
-
-HISTORICAL_DIR = Path("predictions_historical")
 
 def historical_output_path(year, race_num):
     return HISTORICAL_DIR / str(int(year)) / f"predictions_historical_{int(year)}_{int(race_num):02d}.json"
@@ -479,7 +609,7 @@ def update_historical_index(preds, filename):
     if not race.get("season") or not race.get("race_num"):
         return
 
-    index_path = Path("predictions_historical_index.json")
+    index_path = Path(series_filename("predictions_historical_index", "json"))
     if index_path.exists():
         try:
             index = json.loads(index_path.read_text())
@@ -529,8 +659,7 @@ def write_predictions_from_rows(training_rows, testing, output_path):
     models = train_models(X, y, tt, required_tracks)
 
     preds = predict_field(models, testing, meta)
-    with open(output_path, "w") as f:
-        json.dump(preds, f, indent=2)
+    preds = _write_json(preds, output_path)
     print(f"Wrote {output_path}", flush=True)
     return preds
 
@@ -563,9 +692,10 @@ def run_historical_from_cache(year, race_num):
         "chronological no-lookahead pass.",
         flush=True,
     )
-    from getdata import build_datasets_for_season, fetch_race, save_raw_cache
+    from getdata import build_datasets_for_season, fetch_race, save_raw_cache, configure_series as configure_getdata
+    configure_getdata(SERIES)
 
-    raw = load_raw_cache()
+    raw = load_raw_cache(series_filename("raw_races_cache", "json"))
     target_key = (year, race_num)
     if target_key not in raw:
         raise ValueError(f"Race {year}-{race_num} was not found in raw cache.")
@@ -588,7 +718,7 @@ def run_historical_from_cache(year, race_num):
             _, _, track_name, drivers = repaired
             if len(drivers) > cached_count:
                 raw[target_key] = (track_name, drivers)
-                save_raw_cache(raw)
+                save_raw_cache(raw, series_filename("raw_races_cache", "json"))
                 print(
                     f"  Repaired requested race to {len(drivers)} drivers "
                     "and saved raw cache.",
@@ -630,8 +760,28 @@ def run_historical_from_cache(year, race_num):
     return str(requested_output.as_posix())
 
 
+def build_latest_historical_prediction():
+    """Create/reuse the newest completed race prediction in the historical store."""
+    from getdata import build_datasets_for_race, configure_series as configure_getdata
+    configure_getdata(SERIES)
+    raw = load_raw_cache(series_filename("raw_races_cache", "json"))
+    if not raw:
+        raise ValueError("No completed races are available.")
+    year, race_num = max(raw)
+    output = historical_output_path(year, race_num)
+    if output.exists():
+        print(f"Latest completed race already cached: {output}", flush=True)
+        return str(output.as_posix())
+    training_rows, testing = build_datasets_for_race(raw, year, race_num)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    preds = write_predictions_from_rows(training_rows, testing, output)
+    update_historical_index(preds, output)
+    return str(output.as_posix())
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--series", choices=sorted(SERIES_CONFIG), default="cup")
     parser.add_argument(
         "--historical",
         nargs=2,
@@ -640,17 +790,18 @@ def main():
         help="Build all missing historical predictions for the selected season in one pass.",
     )
     args = parser.parse_args()
+    configure_series(args.series)
 
     if args.historical:
         year, race_num = args.historical
         run_historical_from_cache(year, race_num)
         return
 
-    print("=== Last-race predictions ===", flush=True)
-    write_predictions("training_last_race.csv", "testing_last_race.json", "predictions_last_race.json")
+    print("=== Latest completed race (historical cache) ===", flush=True)
+    build_latest_historical_prediction()
 
     print("\n=== Next-race predictions ===", flush=True)
-    write_predictions("training.csv", "testing_next_race.json", "predictions_next_race.json")
+    write_predictions(series_filename("training", "csv"), series_filename("testing", "json"), series_filename("predictions", "json"))
 
 
 if __name__ == "__main__":
