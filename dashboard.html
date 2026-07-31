@@ -179,6 +179,17 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
 .stat-compact .value { font-family:var(--mono); color:var(--text); font-size:16px; font-weight:700; text-align:right; }
 .compare-simple { display:grid; gap:10px; }
 .compare-simple-row { display:grid; grid-template-columns:70px 1fr 78px; gap:10px; align-items:center; }
+.similar-table { display:grid; gap:0; }
+.similar-head, .similar-row { display:grid; grid-template-columns:42px 36px minmax(120px,1fr) 34px 38px 30px; gap:6px; align-items:center; }
+.similar-head { padding:0 2px 7px; color:var(--muted); font-family:var(--mono); font-size:10px; letter-spacing:.02em; border-bottom:1px solid var(--border); }
+.similar-row { min-height:40px; padding:7px 2px; border-bottom:1px solid rgba(255,255,255,.045); font-family:var(--mono); font-size:11px; }
+.similar-row:last-child { border-bottom:none; }
+.similar-year, .similar-race { color:var(--muted); }
+.similar-driver { color:var(--text); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.similar-score { color:var(--accent); text-align:right; }
+.similar-finish { color:var(--text); font-weight:700; text-align:right; }
+.car-tile.micro { width:34px; height:24px; border-radius:4px; }
+.car-tile.micro .num-text { font-size:18px; -webkit-text-stroke:1.4px var(--num-outline); transform:translateY(0); }
 
 ::-webkit-scrollbar { width:4px; height:4px; }
 ::-webkit-scrollbar-track { background:transparent; }
@@ -204,6 +215,7 @@ body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text
   <select class="select" id="series-select" title="Series">
     <option value="cup">Cup Series</option>
     <option value="oreilly">O’Reilly Series</option>
+    <option value="truck">Truck Series</option>
   </select>
   <div class="divider"></div>
   <select class="select" id="display-select" title="Odds format">
@@ -316,7 +328,7 @@ async function loadSeriesData(){
 
   // Rebuilding the historical dropdowns selects a race, but that selection
   // does not fire a change event. Explicitly load it when the active mode is
-  // historical (especially after switching Cup <-> O'Reilly).
+  // historical (especially after switching series).
   if(mode === 'historical' && HIST_INDEX.length){
     await loadSelectedHistorical();
   }
@@ -331,11 +343,26 @@ async function loadSeriesData(){
   await loadSeasonComparison(activeSeason());
 }
 
+function seriesLabel(key=series){
+  return ({cup:'Cup',oreilly:'O’Reilly',truck:'Truck'})[key] || 'Cup';
+}
+
+function seriesFullName(key=series){
+  return ({
+    cup:'NASCAR Cup Series',
+    oreilly:'NASCAR O’Reilly Series',
+    truck:'NASCAR Craftsman Truck Series',
+  })[key] || 'NASCAR Cup Series';
+}
+
 function applySeriesTheme(){
   const root=document.documentElement;
   if(series==='oreilly'){
     root.style.setProperty('--accent','#39e75f');
     root.style.setProperty('--accent-rgb','57,231,95');
+  }else if(series==='truck'){
+    root.style.setProperty('--accent','#ff8c32');
+    root.style.setProperty('--accent-rgb','255,140,50');
   }else{
     root.style.setProperty('--accent','#fde725');
     root.style.setProperty('--accent-rgb','253,231,37');
@@ -346,7 +373,7 @@ async function setSeries(value){
   series=value || 'cup';
   $('#series-select').value=series;
   applySeriesTheme();
-  const label=series==='cup'?'Cup':'O’Reilly';
+  const label=seriesLabel();
   setStatus(`Loading ${label} Series...`);
   try{
     await loadSeriesData();
@@ -535,14 +562,20 @@ const TEAL = "#15cf9a"
 
 // Number tile palette: [background, number fill, number outline]
 const CAR_SCHEMES = {
+  '0' : [
+    [BLACK, WHITE, RED, 2005]
+  ],
   '1' : [
+    [MAROON, WHITE, BLACK, 2005],
+    [BLACK, REDORANGE, WHITE, 2006, 2009],
     [REDORANGE,   BLACK, WHITE, 2010, 2013],
     [RED,   WHITE, BLACK, 2014, 2018],
     [BLACK,   WHITE, GREEN, 2019, 2021],
-    [SKY,   WHITE, BLACK, 2022, 2026]
+    [SKY,   WHITE, BLACK, 2022, 2023],
+    [PALEBLUE, NAVY, WHITE, 2024, 2026]
   ],
   '2' : [
-    [BLUE,   WHITE, RED, 2010, 2013],
+    [BLUE,   WHITE, RED, 2005, 2013],
     [WHITE,   NAVY, RED, 2014, 2019],
     [WHITE,   BLACK, RED, 2020, 2026]
   ],
@@ -550,6 +583,9 @@ const CAR_SCHEMES = {
     [BLACK, REDORANGE, WHITE, 2014, 2026]
   ],
   '4' : [
+    [WHITE, RED, BLACK, 2005],
+    [BLUE, WHITE, RED, 2006],
+    [BLACK, WHITE, ORANGE, 2007],
     [NAVY, WHITE, RED, 2011],
     [RED, WHITE, BLACK, 2014, 2015],
     [BLACK, RED, WHITE, 2016, 2018],
@@ -558,18 +594,22 @@ const CAR_SCHEMES = {
     [BLACK,  WHITE, GOLD, 2024, 2026],
   ],
   '5' : [
+    [NAVY, NEON, BLACK, 2005, 2009],
     [LIME,   ORANGE, BLACK, 2010, 2011],
     [NAVY,   WHITE, BLACK, 2012, 2017],
     [BLUE,   WHITE, RED, 2021, 2026]
   ],
   '6' : [
-    [BROWN,   GOLD, BLACK, 2010, 2011],
+    [SKY, WHITE, NAVY, 2005],
+    [WHITE, RED, NAVY, 2006, 2008],
+    [BROWN,   GOLD, BLACK, 2009, 2011],
     [BLUE,   ORANGE, BLACK, 2012],
     [WHITE,   RED, NAVY, 2014, 2018],
     [WHITE,   SKY, BLACK, 2019, 2021],
     [GREEN,    RED, WHITE, 2022, 2026]
   ],
   '7' : [
+    [BLACK, WHITE, RED, 2005, 2009],
     [ORANGE, WHITE, BLACK, 2010, 2012],
     [REDORANGE, WHITE, BLACK, 2013],
     [YELLOW, REDORANGE, BLACK, 2014],
@@ -579,16 +619,19 @@ const CAR_SCHEMES = {
     [BLUE,  LIME, WHITE, 2026, 2026],
   ],
   '8' : [
+    [RED, WHITE, BLACK, 2005, 2007],
+    [BLACK, WHITE, GOLD, 2008, 2009],
     [GREEN, WHITE, BLACK, 2018],
     [GOLD, RED, WHITE, 2019, 2022],
     [BLACK, WHITE, RED, 2023, 2026],
   ],
   '9' : [
-    [RED,   WHITE, BLACK, 2010],
+    [RED,   WHITE, BLACK, 2005, 2010],
     [YELLOW,   WHITE, BLACK, 2011, 2015],
     [WHITE,   BLUE, YELLOW, 2018, 2026]
   ],
   '10': [
+    [WHITE, NAVY, RED, 2005, 2008],
     [GREEN, WHITE, BLACK, 2010],
     [WHITE, RED, BLACK, 2012],
     [LIME, ORANGE, BLACK, 2013, 2015],
@@ -597,23 +640,35 @@ const CAR_SCHEMES = {
     [RED, WHITE, BLACK, 2024, 2026],
   ],
   '11': [
-    [PURPLE,    WHITE, ORANGE, 2010, 2026]
+    [PURPLE,    WHITE, BLACK, 2005],
+    [BLACK, WHITE, ORANGE, 2006, 2012],
+    [PURPLE,    WHITE, ORANGE, 2013, 2024],
+    [SKY, WHITE, NAVY, 2025, 2026]
   ],
   '12': [
+    [BLACK, WHITE, SKY, 2005, 2006],
+    [BLUE, WHITE, BLACK, 2007, 2008],
+    [BLACK, WHITE, RED, 2009],
     [RED, WHITE, BLACK, 2010],
     [SKY, WHITE, RED, 2012, 2014],
     [NEON, BLACK, WHITE, 2018, 2026]
   ],
   '13': [
-    [BLUE, WHITE, RED, 2010, 2011],
+    [RED, WHITE, BLACK, 2005],
+    [BLUE, WHITE, BLACK, 2007],
+    [BLUE, WHITE, RED, 2009, 2011],
     [WHITE, LIME, BLUE, 2012, 2020],
   ],
   '14': [
-    [RED, WHITE, BLACK, 2010, 2012],
+    [SILVER, WHITE, REDORANGE, 2005],
+    [GREEN, GOLD, WHITE, 2006, 2007],
+    [RED, WHITE, BLACK, 2009, 2012],
     [BLACK, WHITE, REDORANGE, 2013, 2020],
     [BLUE, WHITE, BLACK, 2021, 2024]
   ],
   '15': [
+    [BLUE, WHITE, GOLD, 2005],
+    [NEON, BLACK, WHITE, 2006, 2008],
     [BLUE, WHITE, GOLD, 2011],
     [RED,  WHITE, BLACK, 2012, 2016],
     [BLACK, WHITE, SKY, 2017, 2019],
@@ -621,37 +676,42 @@ const CAR_SCHEMES = {
     [WHITE, RED, BLACK, 2021, 2024]
   ],
   '16': [
-    [WHITE,  YELLOW, BLACK, 2010, 2014],
+    [NAVY, NEON, BLACK, 2005, 2006],
+    [WHITE,  YELLOW, BLACK, 2007, 2014],
     [BLACK,  WHITE, RED, 2015],
     [RED,  NAVY, WHITE, 2016],
     [WHITE,  YELLOW, BLACK, 2020, 2026],
   ],
   '17': [
+    [YELLOW, BLACK, WHITE, 2005, 2009],
     [PURPLE,  WHITE, BLACK, 2010, 2011],
     [YELLOW,  BLUE, BLACK, 2012, 2013],
     [SKY,  WHITE, BLUE, 2014, 2015],
     [BLUE,   WHITE, BLACK, 2016, 2026]
   ],
   '18': [
-    [YELLOW, WHITE, BLACK, 2010, 2022]
+    [GREEN, RED, WHITE, 2005, 2007],
+    [YELLOW, WHITE, BLACK, 2008, 2022]
   ],
   '19': [
-    [BLACK, YELLOW, RED, 2010],
+    [RED, WHITE, BLACK, 2005, 2008],
+    [BLACK, YELLOW, REDORANGE, 2009, 2010],
     [BLACK, WHITE, SKY, 2012],
     [WHITE, LIME, BLACK, 2013],
     [ORANGE, RED, WHITE, 2015, 2018],
     [BLACK,    REDORANGE, WHITE, 2019, 2026],
   ],
   '20': [
-    [ORANGE, WHITE, BLACK, 2010, 2012],
+    [ORANGE, WHITE, BLACK, 2005, 2012],
     [NEON, WHITE, BLACK, 2013, 2016],
     [YELLOW, WHITE, BLACK, 2017, 2026]
   ],
   '21': [
-    [RED,   WHITE, BLACK, 2010],
+    [RED,   WHITE, BLACK, 2005, 2010],
     [WHITE,   GOLD, BLACK, 2011, 2026]
   ],
   '22': [
+    [GOLD, RED, WHITE, 2005, 2008],
     [YELLOW, REDORANGE, BLACK, 2011, 2026]
   ],
   '23': [
@@ -659,14 +719,18 @@ const CAR_SCHEMES = {
     [REDORANGE,    WHITE, BLACK, 2021, 2026]
   ],
   '24': [
-    [REDORANGE, YELLOW, BLACK, 2010, 2015],
+    [REDORANGE, YELLOW, BLACK, 2005, 2015],
     [BLUE, WHITE, BLACK, 2016, 2020],
     [REDORANGE, YELLOW, BLACK, 2021, 2026]
   ],
   '25':[
+    [NAVY, YELLOW, BLACK, 2005, 2006],
+    [RED, YELLOW, BLACK, 2007],
+    [LIME, WHITE, ORANGE, 2008, 2009],
     [BLUE, WHITE, BLACK, 2015],
   ],
   '26':[
+    [PURPLE, GOLD, BLACK, 2005, 2009],
     [BLACK, WHITE, GOLD, 2010],
     [NAVY, ORANGE, WHITE, 2012],
     [WHITE, GREEN, BLACK, 2013],
@@ -679,35 +743,43 @@ const CAR_SCHEMES = {
     [BLACK, WHITE, SKY, 2019, 2020],
     [ORANGE,    WHITE, BLACK, 2022],
   ],
+  '28': [
+    [WHITE, REDORANGE, BLACK, 2008, 2009],
+  ],
   '29': [
-    [YELLOW, REDORANGE, BLACK, 2010],
+    [SILVER, RED, BLACK, 2005, 2006],
+    [YELLOW, REDORANGE, BLACK, 2007, 2010],
     [BLACK, WHITE, RED, 2011, 2013],
   ],
   '30': [
+    [BLACK, REDORANGE, BLACK, 2006],
     [RED, NEON, BLACK, 2011, 2012],
     [WHITE, NEON, BLACK, 2013, 2014],
     [BLACK, WHITE, SKY, 2015, 2016],
     [BLACK, WHITE, RED, 2011, 2013],
   ],
   '31': [
-    [GOLD, RED, BLACK, 2010, 2019],
+    [ORANGE, WHITE, BLACK, 2005, 2008],
+    [GOLD, RED, BLACK, 2009, 2019],
     [GREEN,  WHITE, BLACK, 2022, 2023],
     [WHITE,  BLUE, SKY, 2024],
   ],
   '32': [
+    [ORANGE, NAVY, WHITE, 2005, 2006],
     [NEON, WHITE, BLACK, 2010],
     [SILVER, BLACK, WHITE, 2011, 2015],
     [GOLD, WHITE, BLACK, 2016, 2018],
     [ORANGE, WHITE, BLACK, 2019, 2020],
   ],
   '33' : [
-    [YELLOW, BLACK, WHITE, 2010, 2011],
+    [YELLOW, BLACK, WHITE, 2009, 2011],
     [BLACK, WHITE, RED, 2012],
     [GOLD, BLACK, WHITE, 2013],
     [BLACK, WHITE, RED, 2014, 2017],
     [BLACK, WHITE, RED, 2021, 2026],
   ],
   '34': [
+    [NAVY, WHITE, BLACK, 2005, 2009],
     [BLUE, YELLOW, BLUE, 2010],
     [NAVY, MAGENTA, WHITE, 2011],
     [BLACK, SKY, WHITE, 2012],
@@ -721,15 +793,22 @@ const CAR_SCHEMES = {
     [BLACK, WHITE, LIME, 2022, 2026]
   ],
   '36': [
-    [WHITE, RED, BLACK, 2010, 2014],
+    [BLUE, GOLD, WHITE, 2005],
+    [GREEN, WHITE, BLACK, 2007],
+    [WHITE, RED, BLACK, 2009, 2014],
     [SKY, BLACK, WHITE, 2019, 2024]
   ],
   '37': [
+    [GREEN, WHITE, BLACK, 2005],
+    [RED, WHITE, BLACK, 2006, 2007],
+    [YELLOW, BLUE, WHITE, 2009],
     [NAVY, MAGENTA, WHITE, 2010],
     [WHITE, RED, BLACK, 2011, 2014],
     [SKY, NAVY, YELLOW, 2017, 2021],
   ],
   '38': [
+    [YELLOW, WHITE, BLACK, 2005, 2007],
+    [PURPLE, WHITE, BLACK, 2008],
     [NAVY, MAGENTA, WHITE, 2010],
     [WHITE, SKY, NAVY, 2011, 2012],
     [YELLOW, REDORANGE, BLACK, 2013, 2015],
@@ -738,15 +817,20 @@ const CAR_SCHEMES = {
     [BLUE, WHITE, LIME, 2025, 2026],
   ],
   '39': [
-    [BLACK, WHITE, GOLD, 2010, 2012],
+    [NAVY, WHITE, BLACK, 2005],
+    [BLACK, WHITE, GOLD, 2009, 2012],
     [RED, WHITE, BLACK, 2013],
   ],
   '40': [
+    [SILVER, REDORANGE, BLACK, 2005, 2008],
     [WHITE,   RED, BLACK, 2013, 2025],
     [RED,   WHITE, BLACK, 2019],
     [BEIGE,   ORANGE, BROWN, 2025, 2026]
   ],
   '41': [
+    [WHITE, RED, BLACK, 2005],
+    [RED, WHITE, BLACK, 2006, 2008],
+    [BLACK, NEON, GREEN, 2009],
     [SKY,    WHITE, NAVY, 2013],
     [BLACK,   WHITE, RED, 2014, 2018],
     [RED,   WHITE, BLACK, 2019],
@@ -754,20 +838,30 @@ const CAR_SCHEMES = {
     [RED,   WHITE, BLACK, 2025, 2026]
   ],
   '42': [
-    [RED,  WHITE, RED, 2010, 2017],
+    [BLACK, REDORANGE, BLACK, 2005, 2008],
+    [RED,  WHITE, RED, 2009, 2017],
     [BLUE,  WHITE, BLACK, 2018, 2020],
     [GREEN,  ORANGE, BLACK, 2021],
     [BLUE,  ORANGE, WHITE, 2022],
     [SILVER,  WHITE, SKY, 2023],
-    [WHITE,  GREEN, LIME, 2024, 2026],
+    [WHITE,  GREEN, GOLD, 2024, 2026],
   ],
   '43': [
-    [SKY, WHITE, NAVY, 2010, 2026]
+    [SKY, WHITE, NAVY, 2005, 2009],
+    [NAVY, WHITE, SKY, 2010, 2011],
+    [SKY, WHITE, NAVY, 2012, 2021],
+    [NAVY, WHITE, BLACK, 2022],
+    [BLUE, WHITE, GOLD, 2023],
+    [WHITE, SKY, NAVY, 2024, 2026]
   ],
   '44': [
+    [YELLOW, REDORANGE, BLACK, 2005, 2006],
+    [WHITE, ORANGE, BROWN, 2007, 2008],
+    [SKY, WHITE, NAVY, 2009],
     [SKY,    WHITE, NAVY, 2016]
   ],
   '45': [
+    [RED, WHITE, BLACK, 2005, 2008],
     [BLACK,   RED, WHITE, 2022, 2026]
   ],
   '46': [
@@ -775,6 +869,7 @@ const CAR_SCHEMES = {
     [WHITE,   RED, BLACK, 2015, 2016]
   ],
   '47': [
+    [YELLOW, RED, WHITE, 2008, 2009],
     [WHITE,    RED, NAVY, 2010, 2014],
     [RED,    BLUE, WHITE, 2015, 2016],
     [WHITE,    RED, NAVY, 2017, 2018],
@@ -783,16 +878,19 @@ const CAR_SCHEMES = {
     [ORANGE,    WHITE, NAVY, 2025, 2026]
   ],
   '48': [
-    [NAVY,    NEON, BLACK, 2010, 2011],
+    [NAVY,    NEON, BLACK, 2005, 2011],
     [NAVY,    WHITE, BLACK, 2012, 2015],
     [NAVY,    NEON, BLACK, 2016, 2017],
     [BLACK,    NEON, BLACK, 2018, 2020],
     [PURPLE,    WHITE, BLACK, 2022, 2026]
   ],
   '49': [
+    [BEIGE, NAVY, WHITE, 2005],
+    [NAVY, WHITE, BLACK, 2006, 2008],
     [BLACK, WHITE, LIME, 2012]
   ],
   '51': [
+    [NAVY, NEON, BLACK, 2005, 2006],
     [BLUE, ORANGE, YELLOW, 2010],
     [RED,   WHITE, BLACK, 2011, 2013],
     [REDORANGE,   BLACK, WHITE, 2014, 2015],
@@ -813,6 +911,8 @@ const CAR_SCHEMES = {
     [BLACK, WHITE, LIME, 2023, 2026]
   ],
   '55': [
+    [BLUE, WHITE, GOLD, 2006, 2008],
+    [BLUE, GOLD, RED, 2009],
     [NAVY, ORANGE, WHITE, 2010],
     [WHITE, SKY, BLACK, 2011],
     [BLUE, WHITE, BLUE, 2012, 2016]
@@ -825,8 +925,12 @@ const CAR_SCHEMES = {
     [RED,   NEON, BLACK, 2016]
   ],
   '60': [
+    [BLACK, RED, WHITE, 2006, 2008],
     [RED,   WHITE, NAVY, 2011],
     [BLUE,   WHITE, BLACK, 2024, 2026]
+  ],
+  '61': [
+    [GREEN, WHITE, BLACK, 2006],
   ],
   '62': [
     [BLACK,   GOLD, RED, 2015],
@@ -834,28 +938,48 @@ const CAR_SCHEMES = {
     [BLACK,   WHITE, SKY, 2022, 2026]
   ],
   '64': [
+    [GOLD, WHITE, RED, 2009],
     [SILVER,   RED, WHITE, 2010],
   ],
   '66': [
+    [BLACK, YELLOW, RED, 2005],
+    [BLUE, YELLOW, BLACK, 2006, 2007],
+    [BLACK, WHITE, SILVER, 2008],
+    [BLUE, WHITE, BLACK, 2009],
     [BLUE,   RED, WHITE, 2010],
     [BLACK,   RED, WHITE, 2011],
-    [BLACK, WHITE, SKY, 2014]
+    [BLACK, WHITE, SKY, 2014],
+    [BLACK, WHITE, GOLD, 2020],
+    [NAVY, WHITE, REDORANGE, 2021],
+    [WHITE, BLACK, WHITE, 2024, 2026],
   ],
   '67': [
     [WHITE,   RED, BLACK, 2023, 2024],
     [NEON,   WHITE, BLACK, 2025, 2026],
   ],
+  '70': [
+    [ORANGE, BLACK, WHITE, 2006, 2007],
+    [WHITE, BLACK, RED, 2008]
+  ],
   '71': [
-    [RED, WHITE, BLACK, 2010],
+    [RED, WHITE, BLACK, 2009, 2010],
     [BLUE, WHITE, BLACK, 2011],
     [WHITE,  REDORANGE, BLACK, 2024],
     [NAVY, WHITE, BLACK, 2025, 2026],
   ],
   '72': [
+    [SKY, WHITE, NAVY, 2006],
     [BLACK,   WHITE, ORANGE, 2017, 2018]
   ],
+  '73': [
+    [SILVER, WHITE, BLACK, 2012]
+  ],
+  '74': [
+    [NAVY, GOLD, BLACK, 2006]
+  ],
   '77': [
-    [BLACK,   WHITE, RED, 2010],
+    [GOLD, RED, BLACK, 2005],
+    [BLACK,   WHITE, RED, 2008, 2010],
     [BLACK, NEON, REDORANGE, 2011],
     [REDORANGE,   WHITE, BLACK, 2017],
     [BLACK, WHITE, SKY, 2019, 2020],
@@ -863,34 +987,39 @@ const CAR_SCHEMES = {
     [YELLOW,   WHITE, BLACK, 2022, 2026]
   ],
   '78': [
-    [BLACK,   REDORANGE, WHITE, 2010, 2018],
+    [MAROON, WHITE, GOLD, 2005, 2006],
+    [WHITE, REDORANGE, BLACK, 2007, 2008],
+    [BLACK,   REDORANGE, WHITE, 2009, 2018],
     [BLACK,   WHITE, RED, 2020, 2026]
   ],
   '82': [
-    [SILVER,   NAVY, WHITE, 2010]
+    [SILVER,   NAVY, WHITE, 2009, 2010]
   ],
   '83': [
-    [NAVY,   WHITE, RED, 2010],
+    [NAVY,   WHITE, RED, 2007, 2010],
     [SILVER,   NAVY, WHITE, 2011],
     [MAROON,   WHITE, BLACK, 2012, 2013],
     [BLACK,   WHITE, RED, 2014, 2017],
   ],
   '84': [
-    [NAVY,   WHITE, RED, 2011],
+    [NAVY,   WHITE, RED, 2007, 2011],
     [SKY,   NAVY, YELLOW, 2023, 2026]
   ],
   '87': [
-    [NAVY, NEON, RED, 2010, 2013],
+    [WHITE, REDORANGE, BLACK, 2008],
+    [NAVY, NEON, RED, 2009, 2013],
     [NAVY, WHITE, RED, 2025, 2026]
   ],
   '88': [
-    [WHITE,   RED, BLACK, 2010, 2014],
+    [WHITE, GOLD, BROWN, 2005, 2007],
+    [GREEN,   RED, WHITE, 2008, 2014],
     [BLUE,   SILVER, WHITE, 2015, 2017],
     [BLUE,   BLACK, WHITE, 2018, 2019],
     [NAVY,   WHITE, BLACK, 2020],
     [NAVY,   WHITE, RED, 2022, 2026]
   ],
   '91': [
+    [BLACK, REDORANGE, YELLOW, 2005],
     [BLACK,   NEON, BLACK, 2012],
     [NAVY,   NEON, BLACK, 2022],
     [NAVY,   SILVER, WHITE, 2023],
@@ -898,6 +1027,7 @@ const CAR_SCHEMES = {
     [NAVY,   WHITE, RED, 2026],
   ],
   '92': [
+    [RED, WHITE, BLACK, 2005],
     [WHITE,   RED, BLACK, 2011],
   ],
   '93': [
@@ -908,38 +1038,60 @@ const CAR_SCHEMES = {
   '95': [
     [RED,   NEON, BLACK, 2011, 2017],
     [WHITE,   BLACK, ORANGE, 2018],
-    [BLACK,   NEON, ORANGE, 2019, 2020],
+    [BLACK,   YELLOW, ORANGE, 2019, 2020],
   ],
   '96': [
+    [SKY, WHITE, BLACK, 2006, 2008],
+    [WHITE, RED, NAVY, 2009],
     [BLACK,   RED, WHITE, 2019, 2020],
     [REDORANGE,   WHITE, BLACK, 2021],
   ],
   '97': [
+    [NAVY, YELLOW, BLACK, 2005],
     [NAVY, NEON, RED, 2011, 2012],
     [NAVY,   WHITE, RED, 2026],
   ],
   '98': [
-    [NEON,   BLACK, WHITE, 2010],
+    [NEON,   BLACK, WHITE, 2009, 2010],
     [BLACK,   RED, WHITE, 2012, 2014],
     [WHITE,   RED, BLACK, 2015],
     [BLACK,   WHITE, SKY, 2016],
     [NAVY,   WHITE, RED, 2026],
   ],
   '99': [
-    [BLACK,  WHITE, SKY, 2010, 2014],
+    [RED, WHITE, BLACK, 2005, 2008],
+    [BLACK,  WHITE, SKY, 2009, 2014],
     [BLACK,  NEON, BLACK, 2018],
     [BLUE,  LIME, WHITE, 2021, 2026]
   ],
   '00': [
-    [NAVY,  NEON, RED, 2010, 2014],
+    [GOLD, WHITE, NAVY, 2005],
+    [NAVY, WHITE, GOLD, 2006, 2007],
+    [NAVY,  NEON, BLACK, 2008, 2014],
     [NEON,  BLACK, WHITE, 2017, 2019],
     [BLUE,  WHITE, ORANGE, 2020, 2021],
     [BLUE,  LIME, WHITE, 2021, 2026]
   ],
   '01': [
+    [BLACK, WHITE, GOLD, 2005, 2007],
+    [BLACK, WHITE, REDORANGE, 2008],
     [BLACK, WHITE, RED, 2025]
   ],
+  '02': [
+    [MAROON, WHITE, BLACK, 2009]
+  ],
+  '06': [
+    [WHITE, YELLOW, BLACK, 2006],
+    [BLACK, WHITE, RED, 2007]
+  ],
+  '07': [
+    [BLACK, WHITE, SILVER, 2005, 2009]
+  ],
+  '08': [
+    [BLACK, RED, WHITE, 2009]
+  ],
   '09': [
+    [BLACK, WHITE, RED, 2005, 2009],
     [RED, WHITE, BLACK, 2010, 2011]
   ],
 };
@@ -948,12 +1100,16 @@ const CAR_SCHEMES = {
 // [background, number fill, number outline, first season, last season]
 const OREILLY_CAR_SCHEMES = {
   '0': [
+    [WHITE, RED, BLACK, 2005, 2006],
+    [ORANGE, BLUE, WHITE, 2007],
     [WHITE, RED, BLACK, 2008, 2009],
     [RED, YELLOW, BLACK, 2015, 2017],
     [RED, WHITE, BLACK, 2018, 2021],
     [GREEN, WHITE, BLACK, 2026],
   ],
   '1': [
+    [ORANGE, WHITE, BLACK, 2005],
+    [BLACK, WHITE, RED, 2006, 2009],
     [RED, WHITE, BLACK, 2010, 2013],
     [BLUE, WHITE, RED, 2015, 2018],
     [WHITE, RED, YELLOW, 2019, 2021],
@@ -962,7 +1118,8 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '2': [
-    [MAROON, WHITE, BLACK, 2005, 2008],
+    [NAVY, WHITE, RED, 2005],
+    [MAROON, GOLD, BLACK, 2006, 2008],
     [BLACK, WHITE, RED, 2009],
     [BLUE, RED, WHITE, 2011, 2012],
     [BLACK, WHITE, SILVER, 2013, 2015],
@@ -977,6 +1134,10 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, REDORANGE, 2012, 2026]
   ],
   '4': [
+    [MAROON, WHITE, BLUE, 2005],
+    [SKY, YELLOW, BLACK, 2006],
+    [BLACK, NEON, WHITE, 2007],
+    [WHITE, BLUE, BLACK, 2008],
     [BLUE, WHITE, BLACK, 2010, 2011],
     [BLACK, REDORANGE, WHITE, 2012],
     [BLACK, YELLOW, RED, 2013],
@@ -1000,7 +1161,9 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '6': [
-    [WHITE, REDORANGE, BLACK, 2005, 2009],
+    [YELLOW, BLUE, WHITE, 2005],
+    [RED, WHITE, NAVY, 2006],
+    [WHITE, REDORANGE, BLACK, 2007, 2009],
     [BLUE, WHITE, BLACK, 2010, 2013],
     [WHITE, RED, NAVY, 2014],
     [PURPLE, WHITE, BLACK, 2015, 2017],
@@ -1008,6 +1171,7 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '7': [
+    [NAVY, ORANGE, WHITE, 2005],
     [BLUE, WHITE, RED, 2007, 2008],
     [LIME, ORANGE, BLACK, 2010, 2012],
     [RED, WHITE, BLACK, 2013, 2015],
@@ -1027,17 +1191,21 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '9': [
+    [SILVER, REDORANGE, BLACK, 2005],
+    [RED, WHITE, NAVY, 2006, 2008],
     [YELLOW, WHITE, BLACK, 2011, 2013],
     [NAVY, WHITE, RED, 2014, 2017],
     [WHITE, BLACK, GREEN, 2018],
     [SILVER, RED, WHITE, 2019],
     [SILVER, ORANGE, BLACK, 2020, 2022],
-
     [NEON, BLACK, WHITE, 2023, 2024],
     [NAVY, LIME, WHITE, 2025],
     [ORANGE, WHITE, BLACK, 2026],
   ],
   '10': [
+    [BLUE, RED, WHITE, 2005],
+    [BLUE, WHITE, YELLOW, 2006, 2007],
+    [BLACK, WHITE, GREEN, 2008],
     [MAROON, WHITE, BLACK, 2009, 2010],
     [BLACK, SKY, WHITE, 2012, 2014],
     [LIME, BLACK, WHITE, 2018, 2021],
@@ -1046,6 +1214,8 @@ const OREILLY_CAR_SCHEMES = {
     [REDORANGE, YELLOW, BLACK, 2025],
   ],
   '11': [
+    [NEON, BLACK, WHITE, 2005, 2006],
+    [NAVY, WHITE, REDORANGE, 2007],
     [WHITE, REDORANGE, BLACK, 2008, 2009],
     [YELLOW, WHITE, BLACK, 2010, 2012],
     [BLUE, RED, WHITE, 2013, 2014],
@@ -1055,7 +1225,8 @@ const OREILLY_CAR_SCHEMES = {
 
   ],
   '12': [
-    [YELLOW, BLUE, WHITE, 2008],
+    [PURPLE, WHITE, BLACK, 2005, 2006],
+    [YELLOW, BLUE, WHITE, 2007, 2008],
     [BLACK, WHITE, RED, 2009, 2010],
     [YELLOW, BLACK, WHITE, 2011, 2013],
     [WHITE, RED, BLACK, 2014, 2019],
@@ -1068,17 +1239,21 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, RED, BLACK, 2021, 2022]
   ],
   '14': [
+    [NAVY, WHITE, GOLD, 2005, 2006],
+    [RED, WHITE, BLACK, 2007],
     [ORANGE, WHITE, BLACK, 2011, 2014],
     [WHITE, RED, BLACK, 2024, 2025]
   ],
   '15': [
+    [NEON, BLACK, WHITE, 2007],
     [RED, WHITE, BLACK, 2009, 2010],
     [BLUE, WHITE, BLACK, 2011],
     [RED, WHITE, BLACK, 2017, 2021],
     [WHITE, PALEBLUE, BLACK, 2024],
   ],
   '16': [
-    [RED, WHITE, NAVY, 2005, 2007],
+    [RED, WHITE, ORANGE, 2005],
+    [RED, WHITE, NAVY, 2006, 2007],
     [BLUE, WHITE, BLACK, 2008, 2009],
     [BLACK, WHITE, PALEBLUE, 2010],
     [WHITE, BLUE, BLACK, 2011, 2013],
@@ -1086,6 +1261,8 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, BLACK, ORANGE, 2018, 2025],
   ],
   '17': [
+    [BLACK, WHITE, RED, 2005, 2006],
+    [RED, BLACK, WHITE, 2007, 2009],
     [WHITE, RED, BLACK, 2010],
     [BLACK, WHITE, SKY, 2012, 2014],
     [WHITE, BLUE, BLACK, 2020, 2021],
@@ -1093,8 +1270,9 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '18': [
-    [ORANGE, WHITE, BLACK, 2005, 2007],
-    [BLACK, WHITE, REDORANGE, 2008, 2013],
+    [ORANGE, WHITE, BLACK, 2005],
+    [GREEN, RED, WHITE, 2006],
+    [BLACK, WHITE, REDORANGE, 2007, 2013],
     [ORANGE, RED, WHITE, 2015],
     [SKY, WHITE, BLACK, 2016, 2017],
     [WHITE, BLACK, RED, 2018, 2019],
@@ -1107,6 +1285,8 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '19': [
+    [RED, GOLD, BLACK, 2005],
+    [REDORANGE, WHITE, BLACK, 2006],
     [BLACK, SKY, WHITE, 2011],
     [WHITE, LIME, BLACK, 2012],
     [WHITE, BLACK, WHITE, 2013, 2015],
@@ -1119,6 +1299,7 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '20': [
+    [RED, WHITE, BLACK, 2005, 2007],
     [BLACK, WHITE, RED, 2008, 2012],
     [NEON, WHITE, BLACK, 2013],
     [BLACK, WHITE, RED, 2014, 2017],
@@ -1130,6 +1311,10 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '21': [
+    [ORANGE, YELLOW, BROWN, 2005],
+    [BLUE, REDORANGE, WHITE, 2006],
+    [BLACK, RED, WHITE, 2007],
+    [BLACK, WHITE, RED, 2008],
     [YELLOW, BLUE, WHITE, 2010],
     [RED, WHITE, BLACK, 2012, 2015],
     [GREEN, WHITE, BLACK, 2017],
@@ -1139,12 +1324,16 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '22': [
-    // Brad Keselowski / Penske drivers — Discount Tire
+    [BLACK, WHITE, REDORANGE, 2005, 2006],
+    [PURPLE, NEON, ORANGE, 2007, 2008],
+    [YELLOW, BLUE, WHITE, 2009],
     [WHITE, BLACK, RED, 2010, 2017],
     [WHITE, TEAL, BLACK, 2018, 2020],
     [NEON, BLACK, WHITE, 2021],
   ],
   '23': [
+    [ORANGE, WHITE, BLACK, 2005],
+    [BLACK, YELLOW, RED, 2006, 2007],
     [BLACK, WHITE, RED, 2008, 2014],
     [SKY, WHITE, BLACK, 2017, 2018],
     [BLACK, WHITE, RED, 2019],
@@ -1152,6 +1341,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, SKY, 2022],
   ],
   '24': [
+    [NAVY, NEON, BLACK, 2007],
     [ORANGE, WHITE, BLUE, 2008, 2010],
     [SILVER, BLUE, WHITE, 2015],
     [BLACK, WHITE, ORANGE, 2016, 2017],
@@ -1160,6 +1350,8 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, RED, BLACK, 2025, 2026],
   ],
   '25': [
+    [RED, YELLOW, BLACK, 2005, 2006],
+    [PURPLE, WHITE, BLACK, 2007],
     [BLACK, NEON, BLACK, 2008, 2009],
     [YELLOW, BLUE, WHITE, 2013, 2015],
     [RED, NEON, BLACK, 2016, 2020],
@@ -1168,6 +1360,7 @@ const OREILLY_CAR_SCHEMES = {
     [PURPLE, WHITE, ORANGE, 2026],
   ],
   '26': [
+    [RED, WHITE, BLACK, 2007],
     [WHITE, REDORANGE, BLACK, 2009, 2010],
     [WHITE, BLACK, RED, 2020, 2022],
     [WHITE, NAVY, SKY, 2023],
@@ -1175,7 +1368,8 @@ const OREILLY_CAR_SCHEMES = {
     [NAVY, WHITE, BLACK, 2025, 2026],
   ],
   '27': [
-    [NAVY, NEON, BLACK, 2008],
+    [SKY, NEON, BLACK, 2005, 2006],
+    [NAVY, NEON, BLACK, 2007, 2008],
     [BLUE, WHITE, BLUE, 2009],
     [BLACK, WHITE, RED, 2010],
     [SKY, NEON, BLACK, 2011],
@@ -1185,6 +1379,7 @@ const OREILLY_CAR_SCHEMES = {
     [RED, WHITE, BLACK, 2025, 2026],
   ],
   '28': [
+    [ORANGE, WHITE, BLACK, 2007],
     [WHITE, YELLOW, BLACK, 2008, 2009],
     [WHITE, ORANGE, BLACK, 2010],
     [BLACK, WHITE, REDORANGE, 2011],
@@ -1194,12 +1389,14 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, RED, 2022, 2026],
   ],
   '29': [
-    [GREEN, WHITE, BLACK, 2008, 2009],
+    [ORANGE, YELLOW, BROWN, 2005],
+    [GREEN, WHITE, BLACK, 2006, 2009],
     [RED, WHITE, BLACK, 2013, 2015],
     [BLACK, WHITE, RED, 2023],
     [SKY, YELLOW, NAVY, 2024],
   ],
   '30': [
+    [RED, NAVY, WHITE, 2005, 2007],
     [BLUE, ORANGE, WHITE, 2008],
     [BLACK, WHITE, GREEN, 2010, 2012],
     [WHITE, ORANGE, BLACK, 2013],
@@ -1213,27 +1410,27 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, GOLD, NAVY, 2025, 2026],
   ],
   '32': [
-    [YELLOW, BLACK, WHITE, 2008, 2011],
+    [GREEN, YELLOW, BLACK, 2005, 2007],
+    [YELLOW, WHITE, BLACK, 2008, 2011],
     [WHITE, BLUE, BLACK, 2012, 2013],
     [YELLOW, RED, WHITE, 2024, 2025],
     [RED, BLACK, WHITE, 2026],
   ],
 
   '33': [
-    // Kevin Harvick / Ron Hornaday — Camping World, KHI
-    [YELLOW, BLACK, RED, 2005, 2007],
-
-    // Kevin Harvick — Rheem, KHI
+    [YELLOW, WHITE, BLACK, 2005, 2007],
     [BLACK, WHITE, RED, 2008, 2011],
     [NEON, BLACK, WHITE, 2012, 2017],
     [BLUE, WHITE, RED, 2025],
     [RED, WHITE, BLACK, 2026],
   ],
   '34': [
+    [YELLOW, REDORANGE, BLACK, 2005],
     [YELLOW, BLUE, WHITE, 2009, 2010],
     [GREEN, WHITE, BLACK, 2022]
   ],
   '35': [
+    [RED, YELLOW, BLACK, 2005, 2007],
     [WHITE, BLACK, WHITE, 2010],
     [BLACK, NEON, BLACK, 2018],
     [SKY, WHITE, BLACK, 2019, 2024],
@@ -1241,6 +1438,9 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, REDORANGE, WHITE, 2026],
   ],
   '36': [
+    [NAVY, WHITE, RED, 2005],
+    [SILVER, REDORANGE, WHITE, 2006],
+    [BLACK, WHITE, ORANGE, 2007],
     [BLUE, WHITE, RED, 2008],
     [YELLOW, BLUE, WHITE, 2010],
     [YELLOW, WHITE, BLACK, 2012],
@@ -1249,8 +1449,11 @@ const OREILLY_CAR_SCHEMES = {
     [NEON, BLACK, NEON, 2020, 2022],
     [ORANGE, WHITE, BLACK, 2023, 2024]
   ],
+  '37': [
+    [YELLOW, WHITE, BLUE, 2007],
+  ],
   '38': [
-    [RED, WHITE, BLACK, 2008, 2011],
+    [BLACK, WHITE, REDORANGE, 2005, 2011]
     [WHITE, BLACK, RED, 2012],
     [RED, WHITE, BLACK, 2013],
     [BLACK, WHITE, RED, 2017, 2023],
@@ -1259,6 +1462,8 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '39': [
+    [BLACK, WHITE, SKY, 2005],
+    [WHITE, BLUE, BLACK, 2006, 2007],
     [NEON, BLACK, WHITE, 2011],
     [WHITE, SKY, BLACK, 2012],
     [BLACK, NEON, REDORANGE, 2013, 2014],
@@ -1271,18 +1476,21 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '40': [
+    [GOLD, RED, WHITE, 2005],
     [SKY, WHITE, BLACK, 2008],
     [WHITE, REDORANGE, YELLOW, 2009, 2011],
     [WHITE, SKY, BLACK, 2012],
     [BLACK, WHITE, RED, 2013, 2018]
   ],
   '41': [
+    [WHITE, REDORANGE, BLACK, 2005, 2007],
     [BLACK, REDORANGE, WHITE, 2008],
     [BLACK, WHITE, RED, 2009, 2012],
     [GREEN, WHITE, RED, 2017],
     [BLACK, LIME, WHITE, 2025, 2026],
   ],
   '42': [
+    [BLACK, REDORANGE, BLACK, 2005, 2008],
     [BLACK, REDORANGE, WHITE, 2009, 2010],
     [WHITE, RED, BLACK, 2011],
     [WHITE, SKY, BLACK, 2012],
@@ -1296,6 +1504,7 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, RED, BLACK, 2026]
   ],
   '43': [
+    [SKY, WHITE, RED, 2005, 2006],
     [BLACK, REDORANGE, WHITE, 2010],
     [BLACK, WHITE, REDORANGE, 2012],
     [YELLOW, WHITE, BLACK, 2013],
@@ -1305,6 +1514,7 @@ const OREILLY_CAR_SCHEMES = {
 
   ],
   '44': [
+    [WHITE, NAVY, RED, 2005],
     [BLACK, WHITE, BLUE, 2011],
     [WHITE, BLUE, BLACK, 2012, 2013],
     [BLACK, WHITE, RED, 2014],
@@ -1328,13 +1538,15 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, LIME, BLACK, 2017],
   ],
   '47': [
-    [ORANGE, WHITE, BLACK, 2008, 2009],
+    [YELLOW, WHITE, BLACK, 2005, 2006],
+    [ORANGE, WHITE, BLACK, 2007, 2009],
     [GREEN, WHITE, BLACK, 2010],
     [WHITE, RED, BLACK, 2011],
     [WHITE, SKY, BLACK, 2012],
     [BLACK, REDORANGE, WHITE, 2020, 2022]
   ],
   '48': [
+    [NAVY, NEON, BLACK, 2005, 2008],
     [WHITE, BLACK, RED, 2013],
     [NAVY, BLACK, WHITE, 2016, 2017],
     [YELLOW, RED, BLACK, 2021],
@@ -1342,7 +1554,11 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, ORANGE, BLACK, 2023, 2025],
     [WHITE, NAVY, GREEN, 2026],
   ],
+  '49': [
+    [NAVY, YELLOW, BLACK, 2005, 2006]
+  ],
   '50': [
+    [NAVY, WHITE, GOLD, 2006],
     [WHITE, REDORANGE, BLACK, 2023, 2026]
   ],
   '51': [
@@ -1352,7 +1568,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLUE, WHITE, BLACK, 2021, 2026]
   ],
   '52': [
-    [BLUE, WHITE, BLACK, 2008],
+    [BLUE, WHITE, BLACK, 2007, 2008],
     [WHITE, RED, BLACK, 2009],
     [ORANGE, SKY, NAVY, 2011],
     [WHITE, BLACK, SKY, 2012, 2017],
@@ -1372,17 +1588,31 @@ const OREILLY_CAR_SCHEMES = {
     [GOLD, BLACK, WHITE, 2026],
   ],
   '55': [
+    [REDORANGE, WHITE, BLACK, 2005],
+    [BLACK, WHITE, RED, 2007],
     [NAVY, NEON, BLACK, 2008],
     [BLACK, ORANGE, WHITE, 2013, 2015],
     [WHITE, BLACK, WHITE, 2026]
   ],
   '56': [
+    [ORANGE, WHITE, BLACK, 2005, 2008],
     [WHITE, RED, BLACK, 2010]
   ],
+  '57': [
+    [RED, YELLOW, BLACK, 2005],
+    [RED, WHITE, BLACK, 2006],
+  ],
+  '58': [
+    [BLACK, WHITE, RED, 2005]
+  ],
   '59': [
-    [NAVY, YELLOW, RED, 2008]
+    [NAVY, WHITE, RED, 2005, 2006],
+    [NAVY, YELLOW, RED, 2007, 2008]
   ],
   '60': [
+    [NAVY, YELLOW, BLACK, 2005],
+    [BLACK, NEON, BLUE, 2006],
+    [RED, BLACK, WHITE, 2007],
     [GREEN, BLACK, WHITE, 2008, 2009],
     [BLUE, WHITE, BLACK, 2010, 2011],
     [WHITE, RED, BLACK, 2012],
@@ -1400,10 +1630,14 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, GOLD, RED, 2009, 2017]
   ],
   '64': [
+    [BLACK, WHITE, RED, 2005, 2006],
     [BLACK, WHITE, RED, 2008],
     [SKY, WHITE, BLACK, 2011],
   ],
   '66': [
+    [YELLOW, RED, BLACK, 2005],
+    [NAVY, YELLOW, RED, 2006],
+    [BLACK, WHITE, RED, 2007],
     [BLACK, YELLOW, REDORANGE, 2008, 2011],
     [BLUE, WHITE, BLACK, 2018, 2023]
   ],
@@ -1414,6 +1648,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, MAGENTA, 2019, 2022]
   ],
   '70': [
+    [BLACK, REDORANGE, WHITE, 2006, 2007],
     [BLUE, REDORANGE, BLACK, 2008, 2009],
     [WHITE, RED, BLACK, 2010],
     [WHITE, BLACK, RED, 2011, 2013],
@@ -1440,6 +1675,7 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, NAVY, GREEN, 2025]
   ],
   '77' : [
+    [YELLOW, WHITE, BLACK, 2006, 2007],
     [BLACK, RED, WHITE, 2013],
     [ORANGE, WHITE, BLACK, 2021, 2022],
     [BLUE, RED, WHITE, 2023]
@@ -1451,6 +1687,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, RED, 2024]
   ],
   '79': [
+    [RED, WHITE, BLACK, 2005],
     [RED, YELLOW, BLACK, 2009, 2011],
     [BLACK, WHITE, SKY, 2013],
   ],
@@ -1460,6 +1697,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, SKY, 2013],
   ],
   '81': [
+    [REDORANGE, WHITE, BLACK, 2005],
     [WHITE, NAVY, RED, 2008, 2009],
     [NAVY, YELLOW, BLACK, 2010],
     [WHITE, NAVY, GOLD, 2011],
@@ -1471,6 +1709,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, WHITE, ORANGE, 2008, 2010]
   ],
   '84': [
+    [BLACK, WHITE, SILVER, 2006],
     [BLACK, REDORANGE, BLACK, 2008, 2009],
     [WHITE, RED, BLACK, 2014, 2015]
   ],
@@ -1481,6 +1720,7 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, RED, NAVY, 2016, 2019]
   ],
   '87': [
+    [RED, WHITE, BLACK, 2005, 2007],
     [WHITE, BLUE, BLACK, 2009, 2010],
     [BLUE, WHITE, BLACK, 2011],
     [BLACK, YELLOW, RED, 2012, 2016],
@@ -1488,6 +1728,7 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '88': [
+    [WHITE, NAVY, YELLOW, 2005, 2007],
     [WHITE, BLACK, WHITE, 2008],
     [WHITE, RED, BLACK, 2009],
     [BLACK, WHITE, RED, 2010, 2016],
@@ -1495,7 +1736,7 @@ const OREILLY_CAR_SCHEMES = {
     [BLUE, WHITE, RED, 2022, 2026],
   ],
   '89': [
-    [GREEN, GOLD, BLACK, 2008, 2010],
+    [GREEN, GOLD, BLACK, 2007, 2010],
     [RED, GOLD, BLACK, 2011, 2012],
     [PURPLE, GOLD, BLACK, 2013],
     [BLACK, WHITE, RED, 2014, 2016],
@@ -1503,6 +1744,7 @@ const OREILLY_CAR_SCHEMES = {
     [WHITE, RED, WHITE, 2020]
   ],
   '90': [
+    [NAVY, WHITE, RED, 2005, 2007],
     [WHITE, REDORANGE, BLUE, 2008, 2010],
     [BLACK, RED, YELLOW, 2014],
     [NAVY, WHITE, REDORANGE, 2015, 2018],
@@ -1551,7 +1793,8 @@ const OREILLY_CAR_SCHEMES = {
   ],
 
   '99': [
-    [BLUE, WHITE, REDORANGE, 2008, 2009],
+    [NAVY, WHITE, GOLD, 2005, 2006],
+    [BLUE, WHITE, REDORANGE, 2007, 2009],
     [SKY, WHITE, BLUE, 2010],
     [BLACK, ORANGE, BLACK, 2011, 2012],
     [BLACK, WHITE, RED, 2013, 2014],
@@ -1564,14 +1807,16 @@ const OREILLY_CAR_SCHEMES = {
     [BLACK, LIME, SKY, 2026],
   ],
   '00': [
-    [WHITE, ORANGE, BLUE, 2008],
+    [ORANGE, WHITE, BLACK, 2006],
+    [WHITE, ORANGE, BLUE, 2007, 2008],
     [BLUE, ORANGE, BLACK, 2010],
     [BLACK, WHITE, RED, 2012, 2014],
     [WHITE, RED, BLACK, 2017, 2024],
     [YELLOW, RED, BLACK, 2025, 2026],
   ],
   '01': [
-    [WHITE, RED, BLACK, 2008, 2010],
+    [YELLOW, BLACK, WHITE, 2006],
+    [WHITE, RED, BLACK, 2007, 2010],
     [RED, WHITE, BLACK, 2011, 2016],
     [RED, YELLOW, BLACK, 2017, 2019],
   ],
@@ -1582,6 +1827,7 @@ const OREILLY_CAR_SCHEMES = {
     [NAVY, WHITE, BLACK, 2026]
   ],
   '03': [
+    [YELLOW, RED, BLACK, 2007, 2008],
     [BLACK, WHITE, REDORANGE, 2011, 2012]
   ],
   '04': [
@@ -1591,6 +1837,10 @@ const OREILLY_CAR_SCHEMES = {
   '05': [
     [RED, WHITE, BLACK, 2008, 2011],
     [NEON, BLACK, WHITE, 2011],
+  ],
+  '06': [
+    [WHITE, YELLOW, BLACK, 2006],
+    [RED, WHITE, BLACK, 2007],
   ],
   '07': [
     [WHITE, ORANGE, BLACK, 2010, 2011],
@@ -1652,10 +1902,11 @@ async function loadSeasonComparison(season=activeSeason()){
   }
 }
 
-function carScheme(car){
+function carScheme(car, seasonOverride=null, seriesOverride=null){
   const key = String(car);
-  const season = activeSeason();
-  const schemes = series === 'oreilly' ? OREILLY_CAR_SCHEMES : CAR_SCHEMES;
+  const season = seasonOverride ?? activeSeason();
+  const schemeSeries = seriesOverride || series;
+  const schemes = schemeSeries === 'oreilly' ? OREILLY_CAR_SCHEMES : (schemeSeries === 'cup' ? CAR_SCHEMES : {});
   const raw = schemes[key];
   if(!raw) return [BLACK, WHITE, BLACK];
 
@@ -1691,8 +1942,8 @@ function selectOnlyCar(car){
   selected.add(String(car));
   render();
 }
-function numberTile(car, size='small', clickable=false){
-  const [bg,color,outline]=carScheme(car);
+function numberTile(car, size='small', clickable=false, seasonOverride=null, seriesOverride=null){
+  const [bg,color,outline]=carScheme(car, seasonOverride, seriesOverride);
   const safeCar = escapeHtml(car);
   const click = clickable ? ` clickable" role="button" title="Select car #${safeCar}" onclick="event.stopPropagation(); selectOnlyCar('${safeCar}')` : '';
   return `<div class="car-tile ${size}${click}" style="--num-bg:${bg};--num-color:${color};--num-outline:${outline}"><span class="num-text">${safeCar}</span></div>`;
@@ -1912,21 +2163,16 @@ function buildRaceMeta(){
   const data = activeData();
   if(!data) return '—';
   const mm = data.meta?.mode_meta || {};
+  const seriesName = seriesFullName();
+  const race = (mode === 'last_race' || mode === 'historical') ? (mm.race || {}) : (mm.target_race || {});
+  const base = `Predicting: ${race.track_name || '?'} (${race.season || ''} ${seriesName} Race #${race.race_num || ''})`;
 
-  if(mode === 'last_race' || mode === 'historical'){
-    const r = mm.race || {};
-    return `predicting: ${r.track_name || '?'} ${r.season || ''} race ${r.race_num || ''}`;
-  }
-
-  const t = mm.target_race || {};
-  const base = `predicting: ${t.track_name || '?'} ${t.season || ''} race ${t.race_num || ''}`;
-
-  if(mm.qualifying_available){
-    const url = mm.qualifying_url || sourceUrl('qualifying', t.season, t.race_num);
+  if(mode === 'next_race' && mm.qualifying_available){
+    const url = mm.qualifying_url || sourceUrl('qualifying', race.season, race.race_num);
     return `${base} · qualifying results from ${url}`;
   }
-  if(mm.entry_list_available){
-    const url = mm.entry_list_url || sourceUrl('entry', t.season, t.race_num);
+  if(mode === 'next_race' && mm.entry_list_available){
+    const url = mm.entry_list_url || sourceUrl('entry', race.season, race.race_num);
     return `${base} · entry list from ${url}`;
   }
   return base;
@@ -2004,6 +2250,58 @@ function pmfMini(d){
   const color = driverChartColor(d.car);
   return d.pmf.map((p,i)=>`<div class="bar-row"><div class="bar-label">P${i+1}</div><div class="bar-track"><div class="bar-fill" style="width:${clamp(p/maxP*100,0,100)}%;background:${color}"></div></div><div class="bar-val">${fmtP(p)}</div></div>`).join('');
 }
+function ordinal(n){
+  const value=Number(n);
+  if(!Number.isFinite(value)) return '—';
+  const whole=Math.round(value), mod100=whole%100;
+  if(mod100>=11&&mod100<=13) return `${whole}th`;
+  return `${whole}${({1:'st',2:'nd',3:'rd'})[whole%10]||'th'}`;
+}
+function historicalSeriesCode(season, rowSeries){
+  if((rowSeries||series)==='cup') return '';
+  const year=Number(season)||0;
+  if(year>=2026) return 'NOS';
+  if(year>=2015) return 'NXS';
+  if(year>=2008) return 'NNS';
+  return 'NBS';
+}
+function historicalRaceLabel(season, raceNum, rowSeries){
+  const year=Number(season);
+  const yy=Number.isFinite(year) ? String(year%100).padStart(2,'0') : '—';
+  const race=Number(raceNum);
+  const raceText=Number.isFinite(race) ? String(Math.round(race)) : '—';
+  const code=historicalSeriesCode(year,rowSeries);
+  return `'${yy}${code ? ' '+code : ''} R${raceText}`;
+}
+function similarHistoricalCard(d){
+  const currentSeason=Number(activeSeason());
+  const rows=(Array.isArray(d.similar_historical_profiles) ? d.similar_historical_profiles : [])
+    .filter(x=>!Number.isFinite(currentSeason) || Number(x.season) < currentSeason);
+  if(!rows.length) return `<div class="card"><div class="card-title"><b>Similar Historical Profiles</b></div><div class="empty">No prior-season historical matches are available.</div></div>`;
+  const body=rows.map(x=>{
+    const season=Number(x.season)||activeSeason();
+    const raceNum=Number(x.race_num);
+    const raceText=Number.isFinite(raceNum) ? String(Math.round(raceNum)) : '—';
+    const score=Number(x.similarity);
+    const trackTitle=escapeHtml(x.track_name||'');
+    return `<div class="similar-row">
+      <div class="similar-year">${season}</div>
+      <div>${numberTile(x.car||'—','micro',false,season,x.series||series)}</div>
+      <div class="similar-driver" title="${escapeHtml(x.driver||'Unknown driver')}">${escapeHtml(x.driver||'Unknown driver')}</div>
+      <div class="similar-race" title="${trackTitle}">${escapeHtml(raceText)}</div>
+      <div class="similar-score">${Number.isFinite(score)?Math.round(score)+'%':'—'}</div>
+      <div class="similar-finish">${Number.isFinite(Number(x.finish))?Math.round(Number(x.finish)):'—'}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card">
+    <div class="card-title"><b>Similar Historical Profiles</b></div>
+    <div class="similar-table">
+      <div class="similar-head"><div>Year</div><div>Car</div><div>Driver</div><div>Race</div><div style="text-align:right">Sim.</div><div style="text-align:right">Fin.</div></div>
+      ${body}
+    </div>
+  </div>`;
+}
+
 function driverCard(d){
   if(!d) return '<div class="empty">Driver missing.</div>';
   const med = d.median_finish ?? (d.pmf ? medianFromPmf(d.pmf) : 0);
@@ -2022,7 +2320,7 @@ function driverCard(d){
       <div class="label">Expected value</div><div class="value">${Number(d.expected_finish||0).toFixed(1)}</div>
     </div>
     <div class="market-list">${marketBars(d)}</div>
-  </div>`;
+  </div>${similarHistoricalCard(d)}`;
 }
 function h2h(a,b){
   const pa=a.pmf||[], pb=b.pmf||[]; let aw=0,bw=0,tie=0;

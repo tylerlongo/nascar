@@ -7,6 +7,8 @@ Open: http://localhost:5000
 
 from __future__ import annotations
 import json
+import hashlib
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -16,7 +18,8 @@ from typing import Any
 from flask import Flask, jsonify, request, send_from_directory
 
 APP_DIR        = Path(__file__).resolve().parent
-SERIES_CONFIG = {"cup": "Cup Series", "oreilly": "O'Reilly Series"}
+SERIES_CONFIG = {"cup": "Cup Series", "oreilly": "O'Reilly Series", "truck": "Truck Series"}
+HISTORICAL_CACHE_SOURCE_FILES = ("predict.py", "getdata.py", "career_totals_pre_2005.json")
 
 def _series_key(value: str | None) -> str:
     key = str(value or "cup").lower()
@@ -30,6 +33,35 @@ def _raw_cache_file(series: str) -> Path:
 
 def _historical_dir(series: str) -> Path:
     return APP_DIR / "predictions_historical" / series
+
+def _historical_cache_signature() -> str:
+    digest = hashlib.sha256()
+    for filename in HISTORICAL_CACHE_SOURCE_FILES:
+        path = APP_DIR / filename
+        digest.update(f"{filename}\0".encode())
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<missing>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+def _historical_cache_is_current(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text())
+        stored = payload.get("meta", {}).get("historical_cache", {})
+        return stored.get("signature") == _historical_cache_signature()
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+def _remove_stale_historical_cache(path: Path) -> bool:
+    if path.exists() and not _historical_cache_is_current(path):
+        path.unlink()
+        print(f"Removed stale historical cache: {path.relative_to(APP_DIR)}", flush=True)
+        return True
+    return False
 
 app = Flask(__name__, static_folder=None)
 
@@ -87,6 +119,7 @@ def _build_historical_index(series: str = "cup") -> list[dict[str, Any]]:
         if season < 2010:
             continue
         prediction_path = _migrate_legacy_historical_file(season, race_num, series)
+        _remove_stale_historical_cache(prediction_path)
         relpath = _historical_relpath(season, race_num, series).as_posix()
         out.append({
             "season":     season,
@@ -94,7 +127,7 @@ def _build_historical_index(series: str = "cup") -> list[dict[str, Any]]:
             "track_name": track_name,
             "track_type": _get_track_type(track_name, season),
             "file":       relpath,
-            "predicted":  prediction_path.exists(),
+            "predicted":  _historical_cache_is_current(prediction_path),
         })
     return out
 
@@ -190,6 +223,9 @@ def _season_comparison(season: int, series: str = "cup") -> dict[str, Any]:
     season_dir = _historical_dir(series) / str(int(season))
     if season_dir.exists():
         for path in season_dir.glob(f"predictions_historical_{int(season)}_*.json"):
+            _remove_stale_historical_cache(path)
+            if not _historical_cache_is_current(path):
+                continue
             match = path.stem.rsplit("_", 1)[-1]
             if match.isdigit():
                 files_by_race[int(match)] = path
@@ -213,12 +249,15 @@ def _season_comparison(season: int, series: str = "cup") -> dict[str, Any]:
     }
 
 
-def _run(cmd: list[str], timeout: int = 600) -> dict[str, Any]:
+def _run(cmd: list[str], timeout: int = 600, extra_env: dict[str, str] | None = None) -> dict[str, Any]:
     """Run a subprocess, streaming its output live to the terminal."""
     import time
     try:
+        child_env = os.environ.copy()
+        if extra_env:
+            child_env.update(extra_env)
         proc = subprocess.Popen(
-            cmd, cwd=APP_DIR, text=True,
+            cmd, cwd=APP_DIR, text=True, env=child_env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         stdout_lines = []
@@ -319,10 +358,11 @@ def api_scrape():
     """
     series = _series_key(request.args.get("series"))
 
-    # Combined-series training needs both raw caches current. Refresh both
-    # caches without building datasets, then build the selected series once.
+    # Combined national-series training needs every raw cache current. Refresh
+    # Cup, O'Reilly, and Trucks without building datasets, then build feature
+    # caches for the two non-selected series before building the selected one.
     scrape_results = []
-    for scrape_series in (series, "oreilly" if series == "cup" else "cup"):
+    for scrape_series in SERIES_CONFIG:
         result = _run(
             [sys.executable, "getdata.py", "--series", scrape_series, "--scrape-only"],
             timeout=1800,
@@ -334,6 +374,22 @@ def api_scrape():
                 "error": result.get("error", f"getdata.py failed for {scrape_series} (code {result['code']})"),
                 "stdout": result["stdout"],
                 "stderr": result["stderr"],
+            }), 500
+
+    for other_series in SERIES_CONFIG:
+        if other_series == series:
+            continue
+        other_cache_result = _run(
+            [sys.executable, "getdata.py", "--series", other_series, "--feature-cache-only"],
+            timeout=1800,
+        )
+        scrape_results.append((f"{other_series}-feature-cache", other_cache_result))
+        if not other_cache_result["ok"]:
+            return jsonify({
+                "ok": False,
+                "error": other_cache_result.get("error", f"feature-cache build failed for {other_series} (code {other_cache_result['code']})"),
+                "stdout": other_cache_result["stdout"],
+                "stderr": other_cache_result["stderr"],
             }), 500
 
     dataset_result = _run([sys.executable, "getdata.py", "--series", series], timeout=1800)
@@ -353,7 +409,11 @@ def api_scrape():
     combined_scrape_stderr = "".join(result["stderr"] for _, result in scrape_results)
 
     # Rebuild predictions for the series currently selected in the dashboard.
-    r2 = _run([sys.executable, "predict.py", "--series", series], timeout=300)
+    r2 = _run(
+        [sys.executable, "predict.py", "--series", series],
+        timeout=900,
+        extra_env={"HISTORICAL_CACHE_SIGNATURE": _historical_cache_signature()},
+    )
     return jsonify({
         "ok":            r2["ok"],
         "scrape_stdout": combined_scrape_stdout,
@@ -396,8 +456,9 @@ def api_run_historical():
     out_path = _migrate_legacy_historical_file(year, race, series)
     out_file = _historical_relpath(year, race, series).as_posix()
 
-    # Already predicted — return immediately
-    if out_path.exists():
+    # Return immediately only when the cached JSON matches current model/data code.
+    _remove_stale_historical_cache(out_path)
+    if _historical_cache_is_current(out_path):
         return jsonify({
             "ok":     True,
             "file":   out_file,
@@ -405,8 +466,12 @@ def api_run_historical():
             "index":  _build_historical_index(series),
         })
 
-    r = _run([sys.executable, "predict.py", "--series", series, "--historical", str(year), str(race)],
-             timeout=3600)
+    expected_signature = _historical_cache_signature()
+    r = _run(
+        [sys.executable, "predict.py", "--series", series, "--historical", str(year), str(race)],
+        timeout=3600,
+        extra_env={"HISTORICAL_CACHE_SIGNATURE": expected_signature},
+    )
     if not r["ok"]:
         return jsonify({
             "ok":     False,

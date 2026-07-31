@@ -11,6 +11,7 @@ import argparse
 import os
 import random
 import time
+from bisect import bisect_left
 
 try:
     from playwright.sync_api import sync_playwright
@@ -21,6 +22,7 @@ except ImportError:
 # Config
 # ---------------------------------------------------------------------------
 RAW_START_YEAR = 2005
+TRAINING_START_YEAR = 2006  # 2005 is retained only as pre-race history warm-up.
 SEASONS = range(RAW_START_YEAR, datetime.now().year + 1)
 RACES_PER_SEASON = 36
 MAX_WORKERS      = 1
@@ -28,6 +30,7 @@ DA_REQUEST_DELAY_MIN = 1.0
 DA_REQUEST_DELAY_MAX = 1.8
 FULL_SCRAPE_CHECKPOINT_EVERY = 10
 MAX_CONSECUTIVE_NETWORK_FAILURES = 3
+
 USE_RR_ENTRY_LIST = True
 RR_HEADLESS       = False  # headless=True is more likely to hit Cloudflare
 
@@ -36,6 +39,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 SERIES_CONFIG = {
     "cup": {"label": "Cup Series", "da_path": "nascar", "sked_digit": "0", "rr_code": "W"},
     "oreilly": {"label": "O'Reilly Series", "da_path": "nascar_secondseries", "sked_digit": "5", "rr_code": "B"},
+    "truck": {"label": "Truck Series", "da_path": "nascar_truckseries", "sked_digit": "7", "rr_code": "C"},
 }
 SERIES = "cup"
 SERIES_SUFFIX = ""
@@ -43,6 +47,16 @@ RR_SERIES_CODE = "W"
 DA_SERIES_PATH = "nascar"
 SKED_SERIES_DIGIT = "0"
 FEATURE_CACHE_PATH = "feature_cache.json"
+CAREER_SEED_PATH = "career_totals_pre_2005.json"
+CAREER_SERIES = ("cup", "oreilly", "truck")
+CAREER_HISTORY_CONFIG = {
+    "cup": {"da_path": "nascar", "years": range(1982, 2005)},
+    "oreilly": {"da_path": "nascar_secondseries", "years": range(1982, 2005)},
+    "truck": {"da_path": "nascar_truckseries", "years": range(1995, 2005)},
+}
+CAREER_REQUEST_DELAY_MIN = 3.0
+CAREER_REQUEST_DELAY_MAX = 5.0
+_CAREER_TIMELINE_CACHE = None
 
 def configure_series(series):
     global SERIES, SERIES_SUFFIX, RR_SERIES_CODE, DA_SERIES_PATH, SKED_SERIES_DIGIT, FEATURE_CACHE_PATH
@@ -88,13 +102,19 @@ TRACK_TYPES = {
     "California (Auto Club)": "s",
     "Homestead":              "s",
     "Indianapolis":           "s",
-    "Nashville":              "s",
     "Bristol Dirt":           "s",
     "Gateway (WWT)":          "s",
     "Kentucky":               "s",
     "Chicagoland":            "s",
     "Iowa":                   "s",
     "North Wilkesboro":       "s",
+    "Rockingham":             "s",
+    "Mansfield":              "s",
+    "Eldora":                 "s",
+    "Canadian Tire":          "rc",
+    "Knoxville":              "s",
+    "Lime Rock":              "rc",
+    "St. Petersburg":         "rc",
     "Mexico City":            "rc",
     "San Diego":              "rc",
     # Tracks used by the national second series but not necessarily by Cup
@@ -106,7 +126,7 @@ TRACK_TYPES = {
     "Lucas Oil Indianapolis Raceway Park": "s",
     "Memphis":                "s",
     "Gateway":                "s",
-    "Nashville Superspeedway": "s",
+    "Nashville":              "s",
     "Montreal":               "rc",
     "Circuit Gilles Villeneuve": "rc",
     "Mid-Ohio":               "rc",
@@ -122,10 +142,21 @@ TRACK_ALIASES = {
     "Memphis Motorsports Park": "Memphis",
     "Gateway International Raceway": "Gateway",
     "World Wide Technology Raceway": "Gateway (WWT)",
-    "Nashville Superspeedway": "Nashville Superspeedway",
+    "Nashville Superspeedway": "Nashville",
     "Circuit Gilles Villeneuve": "Montreal",
     "Mid-Ohio Sports Car Course": "Mid-Ohio",
     "Portland International Raceway": "Portland",
+    "Rockingham Speedway": "Rockingham",
+    "Mansfield Motorsports Park": "Mansfield",
+    "Mansfield Motor Speedway": "Mansfield",
+    "Eldora Speedway": "Eldora",
+    "Canadian Tire Motorsports Park": "Canadian Tire",
+    "Canadian Tire Motorsport Park": "Canadian Tire",
+    "Mosport International Raceway": "Canadian Tire",
+    "Knoxville Raceway": "Knoxville",
+    "Lime Rock Park": "Lime Rock",
+    "St. Petersburg Street Course": "St. Petersburg",
+    "St. Petersburg street circuit": "St. Petersburg",
 }
 
 
@@ -377,6 +408,30 @@ def scrape_all(cache_path="raw_races_cache.json", raw=None):
     jobs = [(s, r) for s in SEASONS for r in range(1, RACES_PER_SEASON + 1)]
     raw = dict(raw or {})
     checked = _load_checked_slots(cache_path)
+
+    # Older scraper versions could mark a parse failure as checked even though
+    # no race was saved. Repair those generically by reopening missing slots
+    # that sit before a later completed race in the same season. Trailing empty
+    # schedule slots remain checked, so normal end-of-season gaps are untouched.
+    latest_saved_race_by_season = {}
+    for saved_season, saved_race in raw:
+        latest_saved_race_by_season[saved_season] = max(
+            latest_saved_race_by_season.get(saved_season, 0), saved_race
+        )
+
+    reopened = []
+    for slot in sorted(checked):
+        season, race_num = slot
+        if slot not in raw and race_num < latest_saved_race_by_season.get(season, 0):
+            checked.discard(slot)
+            reopened.append(slot)
+
+    if reopened:
+        print(
+            f"  Reopened {len(reopened)} previously skipped internal race slot(s) for retry.",
+            flush=True,
+        )
+
     pending = [job for job in jobs if job not in checked]
 
     if checked:
@@ -408,6 +463,15 @@ def scrape_all(cache_path="raw_races_cache.json", raw=None):
                 print(f"  {message}", flush=True)
                 raise RuntimeError(message)
             # Do not mark a network failure as checked; retry it next run.
+            continue
+
+        if status == "parse_error":
+            # Unknown/malformed pages must remain pending. After the parser or
+            # track map is fixed, the next run will automatically retry them.
+            print(
+                f"  Parse failure left pending for retry: {season} race {race_num}.",
+                flush=True,
+            )
             continue
 
         consecutive_network_failures = 0
@@ -482,6 +546,319 @@ def norm_driver_name(name):
     name = re.sub(r"\b(jr|sr|ii|iii|iv)\.?\b", "", name)
     name = re.sub(r"[^a-z0-9]+", "", name)
     return name
+
+
+def career_driver_key(name):
+    """Conservative career key that keeps Jr/Sr/generational suffixes distinct."""
+    name = (name or "").lower()
+    return re.sub(r"[^a-z0-9]+", "", name)
+
+
+
+
+def _career_history_jobs():
+    return [
+        (series, year, config["da_path"])
+        for series, config in CAREER_HISTORY_CONFIG.items()
+        for year in config["years"]
+    ]
+
+
+def _empty_career_seed_payload():
+    return {"completed_seasons": [], "seasons": {}, "drivers": {}}
+
+
+def _load_career_seed_payload(path=CAREER_SEED_PATH):
+    source = Path(path)
+    if not source.exists():
+        return _empty_career_seed_payload()
+    try:
+        payload = json.loads(source.read_text())
+    except Exception as exc:
+        print(f"  WARNING: {path} is unreadable ({exc}); rebuilding it.", flush=True)
+        return _empty_career_seed_payload()
+    if not isinstance(payload, dict):
+        return _empty_career_seed_payload()
+
+    # Older versions stored only already-summed driver totals. Those totals
+    # cannot be safely repaired season-by-season because re-scraping one season
+    # would double-count it. Rebuild once using the auditable per-season format.
+    if "seasons" not in payload:
+        backup = source.with_suffix(source.suffix + ".legacy")
+        try:
+            os.replace(source, backup)
+            print(
+                f"  Rebuilding legacy career history safely; old file moved to {backup.name}.",
+                flush=True,
+            )
+        except OSError:
+            pass
+        return _empty_career_seed_payload()
+
+    payload.setdefault("completed_seasons", [])
+    payload.setdefault("seasons", {})
+    payload.setdefault("drivers", {})
+    return payload
+
+
+def _rebuild_career_driver_totals(payload):
+    drivers = {}
+    for season_key, season in sorted((payload.get("seasons") or {}).items()):
+        if not isinstance(season, dict):
+            continue
+        series = season.get("series")
+        if series not in CAREER_SERIES:
+            continue
+        for row in season.get("rows") or []:
+            try:
+                display_name = str(row["name"])
+                starts = int(row["starts"])
+                wins = int(row["wins"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            key = career_driver_key(display_name)
+            if not key:
+                continue
+            item = drivers.setdefault(key, {
+                "name": display_name,
+                "cup": {"starts": 0, "wins": 0},
+                "oreilly": {"starts": 0, "wins": 0},
+                "truck": {"starts": 0, "wins": 0},
+            })
+            item["name"] = display_name
+            item[series]["starts"] += starts
+            item[series]["wins"] += wins
+    payload["drivers"] = drivers
+
+
+def _save_career_seed_payload(payload, path=CAREER_SEED_PATH):
+    _rebuild_career_driver_totals(payload)
+    payload["source"] = "DriverAverages annual standings pages"
+    payload["coverage"] = {
+        "cup": "1982-2004",
+        "oreilly": "1982-2004",
+        "truck": "1995-2004",
+    }
+    destination = Path(path)
+    temp = destination.with_suffix(destination.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    os.replace(temp, destination)
+
+
+def _parse_career_standings(html):
+    """Return the largest complete-looking standings table on the page."""
+    soup = BeautifulSoup(html, "html.parser")
+    candidates = []
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+        header_index = None
+        column_map = None
+        for index, row in enumerate(rows[:12]):
+            cells = [clean_cell(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"])]
+            lowered = [re.sub(r"[^a-z0-9]", "", cell.lower()) for cell in cells]
+            if all(name in lowered for name in ("driver", "starts", "wins")):
+                header_index = index
+                column_map = {name: lowered.index(name) for name in ("driver", "starts", "wins")}
+                break
+        if header_index is None:
+            continue
+
+        parsed_by_driver = {}
+        for row in rows[header_index + 1:]:
+            cells = [clean_cell(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"])]
+            if len(cells) <= max(column_map.values()):
+                continue
+            driver = cells[column_map["driver"]]
+            try:
+                starts = int(cells[column_map["starts"]].replace(",", ""))
+                wins = int(cells[column_map["wins"]].replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            if driver and starts >= 0 and 0 <= wins <= starts:
+                parsed_by_driver[career_driver_key(driver) or driver] = (driver, starts, wins)
+        if parsed_by_driver:
+            candidates.append(list(parsed_by_driver.values()))
+
+    return max(candidates, key=len, default=[])
+
+
+def _career_season_is_complete(html, rows):
+    # DriverAverages occasionally closes a response mid-page while still
+    # returning HTTP 200. A real annual national-series table has many entrants
+    # and reaches the site's footer; reject partial pages rather than poisoning
+    # permanent career totals.
+    footer_seen = "privacy policy" in html.lower() and "contact us" in html.lower()
+    return footer_seen and len(rows) >= 50
+
+
+def ensure_pre_2005_career_totals(path=CAREER_SEED_PATH, rebuild=False):
+    """Build/resume validated pre-2005 career totals before feature generation."""
+    destination = Path(path)
+    if rebuild and destination.exists():
+        destination.unlink()
+
+    payload = _load_career_seed_payload(path)
+    completed = set(payload.get("completed_seasons", []))
+    jobs = _career_history_jobs()
+    remaining = [job for job in jobs if f"{job[0]}-{job[1]}" not in completed]
+    if not remaining:
+        return
+
+    print(
+        f"Building pre-2005 career totals: {len(jobs) - len(remaining)}/{len(jobs)} "
+        "validated seasons already complete.",
+        flush=True,
+    )
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    consecutive_failures = 0
+
+    for series, year, da_path in remaining:
+        season_key = f"{series}-{year}"
+        url = f"https://www.driveraverages.com/{da_path}/year.php?yr_id={year}"
+        time.sleep(random.uniform(CAREER_REQUEST_DELAY_MIN, CAREER_REQUEST_DELAY_MAX))
+        try:
+            response = session.get(url, timeout=(15, 35))
+            response.raise_for_status()
+            rows = _parse_career_standings(response.text)
+            if not rows:
+                raise RuntimeError("standings table was not found")
+            if not _career_season_is_complete(response.text, rows):
+                raise RuntimeError(
+                    f"partial standings page detected ({len(rows)} drivers); season left pending"
+                )
+        except Exception as exc:
+            consecutive_failures += 1
+            _save_career_seed_payload(payload, path)
+            print(f"  Career history {series} {year} failed: {exc}", flush=True)
+            if consecutive_failures >= MAX_CONSECUTIVE_NETWORK_FAILURES:
+                raise RuntimeError(
+                    "Pre-2005 career scrape stopped after three consecutive failures. "
+                    "Progress was saved; run Refresh later to resume."
+                ) from exc
+            continue
+
+        consecutive_failures = 0
+        payload.setdefault("seasons", {})[season_key] = {
+            "series": series,
+            "year": int(year),
+            "rows": [
+                {"name": name, "starts": int(starts), "wins": int(wins)}
+                for name, starts, wins in rows
+            ],
+        }
+        completed.add(season_key)
+        payload["completed_seasons"] = sorted(completed)
+        _save_career_seed_payload(payload, path)
+        print(f"  Saved validated career history {series} {year}: {len(rows)} drivers.", flush=True)
+
+    missing = [f"{series}-{year}" for series, year, _ in jobs if f"{series}-{year}" not in completed]
+    if missing:
+        raise RuntimeError(
+            f"Pre-2005 career totals remain incomplete ({len(missing)} season(s)). "
+            "Progress was saved; run Refresh again to retry them."
+        )
+    print(f"Pre-2005 career totals complete: {len(payload.get('drivers', {}))} drivers.", flush=True)
+
+
+def _load_pre_2005_career_totals(path=CAREER_SEED_PATH):
+    """Load generated pre-2005 starts/wins keyed by normalized driver name."""
+    try:
+        with open(path) as f:
+            payload = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"  WARNING: could not load {path}: {e}", flush=True)
+        return {}
+
+    drivers = payload.get("drivers", payload) if isinstance(payload, dict) else {}
+    out = {}
+    for raw_key, item in (drivers or {}).items():
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or raw_key
+        key = career_driver_key(name)
+        if not key:
+            continue
+        totals = {}
+        for series in CAREER_SERIES:
+            values = item.get(series, {}) or {}
+            try:
+                starts = max(0, int(values.get("starts", 0)))
+            except (TypeError, ValueError):
+                starts = 0
+            try:
+                wins = max(0, int(values.get("wins", 0)))
+            except (TypeError, ValueError):
+                wins = 0
+            totals[series] = {"starts": starts, "wins": wins}
+        out[key] = totals
+    return out
+
+
+def _build_career_timeline():
+    """Build cross-series career events from pre-2005 seeds and raw caches."""
+    seeds = _load_pre_2005_career_totals()
+    events = {}
+    for series in CAREER_SERIES:
+        suffix = "" if series == "cup" else f"_{series}"
+        raw = load_raw_cache(f"raw_races_cache{suffix}.json")
+        for (season, race_num), (_track, drivers) in raw.items():
+            for driver, stats in drivers.items():
+                race_date = stats.get("race_date")
+                if not race_date:
+                    continue
+                key = career_driver_key(driver)
+                if not key:
+                    continue
+                try:
+                    won = 1 if int(stats.get("finish")) == 1 else 0
+                except (TypeError, ValueError):
+                    won = 0
+                events.setdefault(key, []).append((str(race_date), series, won))
+
+    timelines = {}
+    all_keys = set(seeds) | set(events)
+    for key in all_keys:
+        running = {series: dict((seeds.get(key) or {}).get(series, {"starts": 0, "wins": 0})) for series in CAREER_SERIES}
+        dates = []
+        snapshots = []
+        for race_date, series, won in sorted(events.get(key, []), key=lambda x: (x[0], x[1])):
+            dates.append(race_date)
+            snapshots.append(tuple((running[s]["starts"], running[s]["wins"]) for s in CAREER_SERIES))
+            running[series]["starts"] += 1
+            running[series]["wins"] += int(won)
+        timelines[key] = {
+            "dates": dates,
+            "before": snapshots,
+            "final": tuple((running[s]["starts"], running[s]["wins"]) for s in CAREER_SERIES),
+            "seed": tuple(((seeds.get(key) or {}).get(s, {}).get("starts", 0), (seeds.get(key) or {}).get(s, {}).get("wins", 0)) for s in CAREER_SERIES),
+        }
+    return timelines
+
+
+def career_features(driver_name, before_date=None):
+    """Return log1p(starts), log1p(wins) for Cup/O'Reilly/Truck before a date."""
+    global _CAREER_TIMELINE_CACHE
+    if _CAREER_TIMELINE_CACHE is None:
+        _CAREER_TIMELINE_CACHE = _build_career_timeline()
+    timeline = _CAREER_TIMELINE_CACHE.get(career_driver_key(driver_name))
+    if timeline is None:
+        counts = ((0, 0), (0, 0), (0, 0))
+    elif before_date:
+        index = bisect_left(timeline["dates"], str(before_date))
+        counts = timeline["before"][index] if index < len(timeline["before"]) else timeline["final"]
+    else:
+        counts = timeline["final"]
+
+    feats = []
+    for starts, wins in counts:
+        feats.extend([float(np.log1p(starts)), float(np.log1p(wins))])
+    return feats
+
 
 def clean_cell(text):
     return re.sub(r"\s+", " ", text or "").strip()
@@ -967,60 +1344,101 @@ def safe_pcts(arr, metric):
     return [float(np.percentile(arr, p)) for p in numeric_pcts]
 
 
-def build_features(history, target_track_type, start_pos=None, min_history=0):
-    """
-    history: list of race dicts (chronological, excluding current race)
-    start_pos: actual starting position for this race (int/float), or None if unknown.
+def _team_rows_for_last_races(rows, window, track_type=None):
+    """Pool every car-start from the team's last N distinct race events."""
+    grouped = {}
+    order = []
+    for row in rows or []:
+        if track_type is not None and row.get("track_type") != track_type:
+            continue
+        key = (row.get("season"), row.get("race_num"))
+        if key == (None, None):
+            continue
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(row)
+    selected = order[-int(window):]
+    return [row for key in selected for row in grouped[key]]
 
-    Returns a flat feature list. If history is short or empty, missing percentile blocks use neutral 20.0 fallbacks.
 
-    Feature layout:
-      Overall windows 10/20/36 x 11 metrics x 3 pcts          =  99
-      Target track type, last 10 x 11 metrics x 3 pcts        =  33
-      Starting position for this race (nan=20.0 fallback)     =   1
-                                                               ----
-                                                                133
+def _team_start_medians(drivers, start_overrides=None):
+    """Return canonical team -> median current-race starting position."""
+    starts = {}
+    start_overrides = start_overrides or {}
+    for driver, stats in drivers.items():
+        canonical = canonical_team_name(stats.get("team", ""))
+        if not canonical:
+            continue
+        car = str(stats.get("car_num", "")).strip()
+        value = start_overrides.get(car, stats.get("start"))
+        value = _finite_float(value)
+        if value is not None:
+            starts.setdefault(canonical, []).append(value)
+    return {team: float(np.median(values)) for team, values in starts.items() if values}
 
-    target_track_type must be the type of the race represented by this row,
-    so a road-course target receives only road-course-specific history, etc.
 
-    The start position is always the last feature. For next-race rows,
-    unknown starts should already be replaced by fallback_start_pos().
+def _team_feature_kwargs(team_name, team_history, current_drivers, start_overrides=None):
+    canonical = canonical_team_name(team_name)
+    medians = _team_start_medians(current_drivers, start_overrides=start_overrides)
+    return {
+        "team_history": team_history.get(canonical, []) if canonical else [],
+        "team_start_pos": medians.get(canonical),
+    }
 
-    Training rows use min_history=0 so every no-lookahead row can be used, including rookies, part-timers, and first-career-start rows.
-    For empty history, percentile features fall back to neutral 20.0 values.
+
+def build_features(history, target_track_type, start_pos=None, min_history=0,
+                   driver_name=None, before_date=None, team_history=None,
+                   team_start_pos=None):
+    """Build driver features plus organization-level mirrors.
+
+    Driver layout: 198 rolling + 6 career + 1 current start = 205.
+    Team layout:   198 rolling over distinct team race events + 1 median
+                   current-race team start = 199.
+    Total: 404 observed variables.
     """
     if len(history) < min_history:
         return None
-
-    feats = []
-
-    # Overall windows
-    for window in [10, 20, 36]:
-        w = history[-window:]
-        for metric in METRICS:
-            vals = [r[metric] for r in w if r.get(metric) is not None]
-            feats.extend(safe_pcts(vals, metric))
-
-    # Only the target race's track type gets a specific-history block.
     if target_track_type not in {"s", "ss", "rc"}:
         raise ValueError(f"Unknown target track type: {target_track_type!r}")
-    typed = [r for r in history if r.get("track_type") == target_track_type][-10:]
-    for metric in METRICS:
-        vals = [r[metric] for r in typed if r.get(metric) is not None]
-        feats.extend(safe_pcts(vals, metric))
 
-    # Current-race starting position (133rd feature)
+    feats = []
+    for window in [5, 10, 20, 36]:
+        w = history[-window:]
+        for metric in METRICS:
+            feats.extend(safe_pcts([r[metric] for r in w if r.get(metric) is not None], metric))
+
+    typed_history = [r for r in history if r.get("track_type") == target_track_type]
+    for window in [5, 10]:
+        typed = typed_history[-window:]
+        for metric in METRICS:
+            feats.extend(safe_pcts([r[metric] for r in typed if r.get(metric) is not None], metric))
+
+    feats.extend(career_features(driver_name or "", before_date=before_date))
     feats.append(float(start_pos) if start_pos is not None else float("nan"))
 
-    return feats  # length 133
+    # Mirror all 198 rolling features at the organization level. A window of
+    # five means the team's last five race events, pooling every car it entered
+    # in those events (e.g. three cars -> about 15 observations).
+    for window in [5, 10, 20, 36]:
+        team_rows = _team_rows_for_last_races(team_history, window)
+        for metric in METRICS:
+            feats.extend(safe_pcts([r[metric] for r in team_rows if r.get(metric) is not None], metric))
+
+    for window in [5, 10]:
+        team_rows = _team_rows_for_last_races(team_history, window, target_track_type)
+        for metric in METRICS:
+            feats.extend(safe_pcts([r[metric] for r in team_rows if r.get(metric) is not None], metric))
+
+    feats.append(float(team_start_pos) if team_start_pos is not None else float("nan"))
+    return feats  # length 404
 
 
 # ---------------------------------------------------------------------------
 # Build datasets
 # ---------------------------------------------------------------------------
 
-FEATURE_CACHE_VERSION = 15
+FEATURE_CACHE_VERSION = 19
 def _race_key_str(key):
     return f"{int(key[0])}-{int(key[1]):02d}"
 
@@ -1031,13 +1449,15 @@ def _race_key_from_str(s):
 
 
 def _row_to_json(row):
-    feats, finish, track_type = row
-    return [feats, finish, track_type]
+    feats, finish, track_type, metadata = row
+    return [feats, finish, track_type, metadata]
 
 
 def _row_from_json(row):
-    feats, finish, track_type = row
-    return (list(feats), finish, track_type)
+    # Feature-cache v16 rows preserve the identity of each historical
+    # observation so prediction output can surface nearest analogues.
+    feats, finish, track_type, metadata = row
+    return (list(feats), finish, track_type, dict(metadata or {}))
 
 
 def _copy_history(history):
@@ -1310,7 +1730,7 @@ def _recent_active_driver_history(history, current_season):
     return kept + no_season_rows
 
 
-def _history_row(stats, track_type, season, driver=None):
+def _history_row(stats, track_type, season, race_num=None, driver=None):
     team = stats.get("team", "")
     return {
         "finish":     stats["finish"],
@@ -1326,6 +1746,7 @@ def _history_row(stats, track_type, season, driver=None):
         "pct_laps_led":       stats.get("pct_laps_led"),
         "track_type": track_type,
         "season":     season,
+        "race_num":   race_num,
         "race_date": stats.get("race_date"),
         "driver":     driver or "",
         "car_num":    str(stats.get("car_num", "")).strip(),
@@ -1360,10 +1781,21 @@ def _build_training_rows_for_one_race(raw, key, driver_history, team_history, dr
             history, stats.get("team", ""), team_history,
             track_type=track_type, min_len=10, start_pos=stats.get("start")
         )
-        feats = build_features(padded_history, target_track_type=track_type, start_pos=stats.get("start"), min_history=0)
-        rows.append((feats, stats["finish"], track_type))
+        feats = build_features(
+            padded_history, target_track_type=track_type, start_pos=stats.get("start"),
+            min_history=0, driver_name=driver, before_date=stats.get("race_date"),
+            **_team_feature_kwargs(stats.get("team", ""), team_history, drivers)
+        )
+        rows.append((feats, stats["finish"], track_type, {
+            "driver": driver,
+            "car": str(stats.get("car_num", "")).strip(),
+            "season": int(season),
+            "race_num": int(race_num),
+            "track_name": track_name,
+            "series": SERIES,
+        }))
 
-        row = _history_row(stats, track_type, season, driver=driver)
+        row = _history_row(stats, track_type, season, race_num=race_num, driver=driver)
         driver_history.setdefault(driver, []).append(row)
         canonical_team = row.get("canonical_team", "")
         if canonical_team:
@@ -1377,9 +1809,19 @@ def _build_training_rows_for_one_race(raw, key, driver_history, team_history, dr
     return rows
 
 
+def _career_seed_signature():
+    path = Path(CAREER_SEED_PATH)
+    try:
+        import hashlib
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return "missing"
+
+
 def _new_empty_feature_cache():
     return {
         "version": FEATURE_CACHE_VERSION,
+        "career_seed_signature": _career_seed_signature(),
         "race_keys": [],
         "training_by_race": {},
         "driver_history_after_latest": {},
@@ -1403,6 +1845,10 @@ def _load_feature_cache(raw_keys):
 
     if cache.get("version") != FEATURE_CACHE_VERSION:
         print("  Feature cache version changed — rebuilding once.", flush=True)
+        return None
+
+    if cache.get("career_seed_signature") != _career_seed_signature():
+        print("  Pre-2005 career totals changed — rebuilding feature cache once.", flush=True)
         return None
 
     cached_keys = cache.get("race_keys", [])
@@ -1516,15 +1962,20 @@ def _rows_for_keys(cache, keys):
 
 
 def training_start_year_for_target(target_season):
-    """Training always uses every available season from 2005 onward."""
-    return RAW_START_YEAR
+    """Return the first season eligible to contribute labeled training rows.
+
+    Raw races still begin in 2005 so those events populate driver/team history.
+    Labeled rows begin in 2006 because 2005 drivers only appear history-limited
+    due to the dataset boundary, not because they were genuine rookies.
+    """
+    return TRAINING_START_YEAR
 
 
 def training_keys_for_target(race_keys, target_key):
-    """All completed race keys from 2005 onward, strictly before target_key."""
+    """Completed labeled-training races from 2006 onward before target_key."""
     return [
         key for key in race_keys
-        if key < target_key and key[0] >= RAW_START_YEAR
+        if key < target_key and key[0] >= TRAINING_START_YEAR
     ]
 
 
@@ -1546,9 +1997,10 @@ def race_date_for_key(raw, key):
     return _race_date_from_drivers(race[1]) if race else None
 
 
-def _other_series(series=None):
+def _other_series_keys(series=None):
+    """Return every national series other than the selected target series."""
     current = str(series or SERIES).lower()
-    return "oreilly" if current == "cup" else "cup"
+    return [key for key in SERIES_CONFIG if key != current]
 
 
 def _load_feature_cache_file(path):
@@ -1564,6 +2016,10 @@ def _load_feature_cache_file(path):
         raise RuntimeError(
             f"{path} is from an older feature-cache version. Refresh that series once first."
         )
+    if cache.get("career_seed_signature") != _career_seed_signature():
+        raise RuntimeError(
+            f"{path} was built with different pre-2005 career totals. Refresh that series once first."
+        )
     return cache
 
 
@@ -1576,6 +2032,8 @@ def _cached_rows(cache, raw, target_date=None):
             season_text, race_text = str(key_text).split("-", 1)
             key = (int(season_text), int(race_text))
         except (TypeError, ValueError):
+            continue
+        if key[0] < TRAINING_START_YEAR:
             continue
         if target_date is not None:
             race_date = race_date_for_key(raw, key)
@@ -1598,6 +2056,8 @@ def _cached_dated_rows(cache, raw):
             key = (int(season_text), int(race_text))
         except (TypeError, ValueError):
             continue
+        if key[0] < TRAINING_START_YEAR:
+            continue
         race_date = race_date_for_key(raw, key)
         if race_date is None:
             continue
@@ -1605,30 +2065,31 @@ def _cached_dated_rows(cache, raw):
     return output
 
 def _combined_cached_training_rows(selected_raw, selected_cache, target_date=None):
-    """Pool existing Cup + O'Reilly feature-cache rows without rebuilding features.
+    """Pool Cup, O'Reilly, and Truck feature-cache rows without rebuilding them.
 
     ``target_date=None`` means use every completed cached race, which is the
     correct and fastest behavior for a current next-race prediction.
     """
-    other = _other_series()
-    other_suffix = "" if other == "cup" else f"_{other}"
-    other_raw_path = f"raw_races_cache{other_suffix}.json"
-    other_feature_path = f"feature_cache{other_suffix}.json"
-    other_raw = load_raw_cache(other_raw_path)
-    if not other_raw:
-        raise FileNotFoundError(
-            f"{other_raw_path} is required for combined Cup + O'Reilly training. "
-            "Run Refresh once so both series caches exist."
-        )
-    other_cache = _load_feature_cache_file(other_feature_path)
-    if other_cache is None:
-        raise FileNotFoundError(
-            f"{other_feature_path} is required for fast combined training. "
-            f"Refresh the {other} series once first."
-        )
-
     rows = _cached_rows(selected_cache, selected_raw, target_date)
-    rows.extend(_cached_rows(other_cache, other_raw, target_date))
+
+    for other in _other_series_keys():
+        other_suffix = "" if other == "cup" else f"_{other}"
+        other_raw_path = f"raw_races_cache{other_suffix}.json"
+        other_feature_path = f"feature_cache{other_suffix}.json"
+        other_raw = load_raw_cache(other_raw_path)
+        if not other_raw:
+            raise FileNotFoundError(
+                f"{other_raw_path} is required for combined national-series training. "
+                "Run Refresh once so every series cache exists."
+            )
+        other_cache = _load_feature_cache_file(other_feature_path)
+        if other_cache is None:
+            raise FileNotFoundError(
+                f"{other_feature_path} is required for fast combined training. "
+                f"Refresh the {other} series once first."
+            )
+        rows.extend(_cached_rows(other_cache, other_raw, target_date))
+
     if target_date is None:
         print(f"  Combined-series training: all completed cached races — {len(rows)} rows.", flush=True)
     else:
@@ -1714,7 +2175,11 @@ def build_datasets(raw):
             history, stats.get("team", ""), th_excl,
             track_type=race_track_type, min_len=10, start_pos=stats.get("start")
         )
-        feats = build_features(padded_history, target_track_type=race_track_type, start_pos=stats.get("start"), min_history=0)
+        feats = build_features(
+            padded_history, target_track_type=race_track_type, start_pos=stats.get("start"),
+            min_history=0, driver_name=driver, before_date=stats.get("race_date"),
+            **_team_feature_kwargs(stats.get("team", ""), th_excl, latest_race_drivers)
+        )
         if feats is None:
             skipped_last.append(driver)
             continue
@@ -1864,6 +2329,21 @@ def build_datasets(raw):
         }
     }
 
+    projected_team_drivers = {}
+    for entry_info in projected_field:
+        car = str(entry_info.get("car_num", "")).strip()
+        canonical = canonical_team_name(entry_info.get("team", ""))
+        projected_start = qual_positions.get(car)
+        if projected_start is None:
+            projected_start = fallback_start_pos(
+                team_history.get(canonical, []), track_type=target_track_type
+            )
+        projected_team_drivers[entry_info.get("driver_name", car)] = {
+            "car_num": car,
+            "team": entry_info.get("team", ""),
+            "start": projected_start,
+        }
+
     skipped_next = []
     for entry_info in projected_field:
         rr_driver = entry_info["driver_name"]
@@ -1908,7 +2388,13 @@ def build_datasets(raw):
             track_type=target_track_type, min_len=10, start_pos=start_pos
         )
 
-        feats = build_features(padded_history, target_track_type=target_track_type, start_pos=start_pos, min_history=0)
+        feats = build_features(
+            padded_history, target_track_type=target_track_type, start_pos=start_pos,
+            min_history=0, driver_name=rr_driver, before_date=target_race_date,
+            **_team_feature_kwargs(
+                entry_info.get("team", ""), team_history, projected_team_drivers
+            )
+        )
         if feats is None:
             skipped_next.append(rr_driver)
             continue
@@ -1998,10 +2484,14 @@ def build_datasets_for_race(raw, target_season, target_race_num):
                     history, stats.get("team", ""), team_history,
                     track_type=track_type, min_len=10, start_pos=stats.get("start")
                 )
-                feats = build_features(padded_history, target_track_type=track_type, start_pos=stats.get("start"), min_history=0)
+                feats = build_features(
+            padded_history, target_track_type=track_type, start_pos=stats.get("start"),
+            min_history=0, driver_name=driver, before_date=stats.get("race_date"),
+            **_team_feature_kwargs(stats.get("team", ""), team_history, drivers)
+        )
                 training.append((feats, stats["finish"], track_type))
 
-            row = _history_row(stats, track_type, season, driver=driver)
+            row = _history_row(stats, track_type, season, race_num=race_num, driver=driver)
             driver_history.setdefault(driver, []).append(row)
             canonical_team = row.get("canonical_team", "")
             if canonical_team:
@@ -2039,7 +2529,11 @@ def build_datasets_for_race(raw, target_season, target_race_num):
             history, stats.get("team", ""), team_history,
             track_type=target_track_type, min_len=10, start_pos=stats.get("start")
         )
-        feats = build_features(padded_history, target_track_type=target_track_type, start_pos=stats.get("start"), min_history=0)
+        feats = build_features(
+            padded_history, target_track_type=target_track_type, start_pos=stats.get("start"),
+            min_history=0, driver_name=driver, before_date=stats.get("race_date"),
+            **_team_feature_kwargs(stats.get("team", ""), team_history, target_drivers)
+        )
         if feats is None:
             skipped.append(driver)
             continue
@@ -2141,7 +2635,9 @@ def _build_historical_testing_from_state(
         )
         feats = build_features(
             padded_history, target_track_type=target_track_type,
-            start_pos=stats.get("start"), min_history=0
+            start_pos=stats.get("start"), min_history=0,
+            driver_name=driver, before_date=stats.get("race_date"),
+            **_team_feature_kwargs(stats.get("team", ""), team_history, target_drivers)
         )
         if feats is None:
             skipped.append(driver)
@@ -2195,20 +2691,25 @@ def build_datasets_for_season(raw, target_season):
     driver_history = {}
     team_history = {}
 
-    # Keep the season alongside each row while accumulating all training data from 2005 onward.
+    # Keep 2005 in driver/team histories, but labeled training begins in 2006.
     accumulated_training = []
     outputs = []
     selected_cache = _prepare_feature_cache(raw)
     selected_dated_rows = _cached_dated_rows(selected_cache, raw)
-    other = _other_series()
-    other_suffix = "" if other == "cup" else f"_{other}"
-    other_raw = load_raw_cache(f"raw_races_cache{other_suffix}.json")
-    if not other_raw:
-        raise FileNotFoundError(f"raw_races_cache{other_suffix}.json is required for combined-series historical training.")
-    other_cache = _load_feature_cache_file(f"feature_cache{other_suffix}.json")
-    if other_cache is None:
-        raise FileNotFoundError(f"feature_cache{other_suffix}.json is required for combined-series historical training.")
-    other_dated_rows = _cached_dated_rows(other_cache, other_raw)
+    other_dated_rows = []
+    for other in _other_series_keys():
+        other_suffix = "" if other == "cup" else f"_{other}"
+        other_raw = load_raw_cache(f"raw_races_cache{other_suffix}.json")
+        if not other_raw:
+            raise FileNotFoundError(
+                f"raw_races_cache{other_suffix}.json is required for combined-series historical training."
+            )
+        other_cache = _load_feature_cache_file(f"feature_cache{other_suffix}.json")
+        if other_cache is None:
+            raise FileNotFoundError(
+                f"feature_cache{other_suffix}.json is required for combined-series historical training."
+            )
+        other_dated_rows.extend(_cached_dated_rows(other_cache, other_raw))
 
     for key in race_keys:
         season, race_num = key
@@ -2254,14 +2755,16 @@ def build_datasets_for_season(raw, target_season):
                 )
                 feats = build_features(
                     padded_history, target_track_type=track_type,
-                    start_pos=stats.get("start"), min_history=0
+                    start_pos=stats.get("start"), min_history=0,
+                    driver_name=driver, before_date=stats.get("race_date"),
+                    **_team_feature_kwargs(stats.get("team", ""), team_history, drivers)
                 )
                 accumulated_training.append(
                     (season, (feats, stats["finish"], track_type))
                 )
 
         for driver, stats in drivers.items():
-            row = _history_row(stats, track_type, season, driver=driver)
+            row = _history_row(stats, track_type, season, race_num=race_num, driver=driver)
             driver_history.setdefault(driver, []).append(row)
             canonical_team = row.get("canonical_team", "")
             if canonical_team:
@@ -2271,7 +2774,13 @@ def build_datasets_for_season(raw, target_season):
 
 
 def load_raw_cache(path="raw_races_cache.json"):
-    """Load raw_races_cache.json -> raw dict with tuple keys. Returns {} if missing."""
+    """Load a raw race cache and migrate stored track aliases automatically.
+
+    Cached races may have been written before a track was renamed in
+    ``TRACK_ALIASES``. Normalize those names while loading and atomically write
+    the migrated names back to disk so exact-track history cannot be split
+    between an old and new label.
+    """
     import os
     if not os.path.exists(path):
         return {}
@@ -2281,14 +2790,47 @@ def load_raw_cache(path="raw_races_cache.json"):
     except Exception as e:
         print(f"  Cache load error: {e}")
         return {}
+
     races = payload.get("races", payload)
     raw = {}
+    migrated = 0
     for key, value in races.items():
         try:
             year_s, race_s = str(key).split("-", 1)
-            raw[(int(year_s), int(race_s))] = (value[0], value[1])
+            stored_track = value[0]
+            canonical_track = TRACK_ALIASES.get(stored_track, stored_track)
+            if canonical_track != stored_track:
+                migrated += 1
+            raw[(int(year_s), int(race_s))] = (canonical_track, value[1])
         except Exception:
             continue
+
+    if migrated:
+        try:
+            if isinstance(payload, dict) and "races" in payload:
+                migrated_payload = dict(payload)
+                migrated_payload["races"] = {
+                    f"{int(season)}-{int(race_num):02d}": [track, drivers]
+                    for (season, race_num), (track, drivers) in sorted(raw.items())
+                }
+            else:
+                migrated_payload = {
+                    f"{int(season)}-{int(race_num):02d}": [track, drivers]
+                    for (season, race_num), (track, drivers) in sorted(raw.items())
+                }
+
+            destination = Path(path)
+            temp_path = destination.with_suffix(destination.suffix + ".tmp")
+            with open(temp_path, "w") as f:
+                json.dump(migrated_payload, f)
+            os.replace(temp_path, destination)
+            print(
+                f"  Migrated {migrated} cached track name(s) using TRACK_ALIASES.",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"  WARNING: could not persist track-name migration: {e}", flush=True)
+
     return raw
 
 
@@ -2452,13 +2994,21 @@ def save_raw_cache(raw, path="raw_races_cache.json", checked_slots=None):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+
+def write_training_rows_json(path, rows):
+    """Persist labeled training rows for nearest-historical-profile lookup."""
+    with open(path, "w") as f:
+        json.dump([_row_to_json(row) for row in rows], f)
+
 def write_training_csv(path, rows):
-    feature_count = len(rows[0][0]) if rows else 133
+    feature_count = len(rows[0][0]) if rows else 404
     feature_cols  = [f"x{i}" for i in range(feature_count)]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(feature_cols + ["finish", "track_type"])
-        for feats, finish, track_type in rows:
+        for row in rows:
+            feats, finish, track_type = row[:3]
             writer.writerow(feats + [finish, track_type])
 
 
@@ -2471,22 +3021,38 @@ if __name__ == "__main__":
         help="Refresh this series raw cache without building model datasets.",
     )
     parser.add_argument(
+        "--feature-cache-only",
+        action="store_true",
+        help="Build or upgrade this series feature cache without creating prediction datasets.",
+    )
+    parser.add_argument(
         "--historical",
         nargs=2,
         metavar=("YEAR", "RACE_NUM"),
         type=int,
         help="Build a no-lookahead dataset for one completed historical race.",
     )
+    parser.add_argument(
+        "--rebuild-career-history",
+        action="store_true",
+        help="Discard and rebuild career_totals_pre_2005.json before continuing.",
+    )
     args = parser.parse_args()
     configure_series(args.series)
 
     print(f"Series: {SERIES_CONFIG[SERIES]['label']}")
+    ensure_pre_2005_career_totals(rebuild=args.rebuild_career_history)
     print("Checking for new completed races (incremental)...")
     raw = scrape_incremental(series_filename("raw_races_cache", "json"))
     print(f"Cache now has {len(raw)} completed races.")
 
     if args.scrape_only:
         print("Scrape-only refresh complete.")
+        raise SystemExit(0)
+
+    if args.feature_cache_only:
+        _prepare_feature_cache(raw)
+        print("Feature-cache refresh complete.")
         raise SystemExit(0)
 
     if args.historical:
@@ -2504,8 +3070,9 @@ if __name__ == "__main__":
 
         print(f"{len(training)} next-race training rows.")
         write_training_csv(series_filename("training", "csv"), training)
+        write_training_rows_json(series_filename("training_rows", "json"), training)
 
         with open(series_filename("testing", "json"), "w") as f:
             json.dump(next_race_testing, f, indent=2)
 
-        print(f"Done. Wrote {series_filename('training', 'csv')} and {series_filename('testing', 'json')}.")
+        print(f"Done. Wrote {series_filename('training', 'csv')}, {series_filename('training_rows', 'json')}, and {series_filename('testing', 'json')}.")

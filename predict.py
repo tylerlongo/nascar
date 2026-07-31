@@ -2,11 +2,14 @@ import json
 import csv
 import warnings
 import argparse
+import hashlib
+import os
 from pathlib import Path
 import numpy as np
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+import sklearn
 from sklearn.linear_model import LogisticRegression
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -14,10 +17,67 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 TRACKS = ["s", "ss", "rc"]
 TRACK_LABELS = {"s": "Speedway", "ss": "Superspeedway", "rc": "Road Course"}
 
-SERIES_CONFIG = {"cup": "Cup Series", "oreilly": "O'Reilly Series"}
+SERIES_CONFIG = {"cup": "Cup Series", "oreilly": "O'Reilly Series", "truck": "Truck Series"}
 SERIES = "cup"
 SERIES_SUFFIX = ""
 HISTORICAL_DIR = Path("predictions_historical") / "cup"
+
+# Historical prediction files are invalidated automatically whenever the
+# source code that determines their contents changes.
+HISTORICAL_CACHE_SOURCE_FILES = ("predict.py", "getdata.py", "career_totals_pre_2005.json")
+
+
+def historical_cache_signature():
+    """Fingerprint all code that determines historical prediction contents.
+
+    When launched by app.py, use the parent process's exact signature so the
+    generated file and the Flask cache checker cannot disagree.
+    """
+    inherited = os.environ.get("HISTORICAL_CACHE_SIGNATURE")
+    if inherited:
+        return inherited
+
+    digest = hashlib.sha256()
+    base = Path(__file__).resolve().parent
+    for filename in HISTORICAL_CACHE_SOURCE_FILES:
+        path = base / filename
+        digest.update(f"{filename}\0".encode())
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<missing>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def historical_cache_metadata():
+    return {
+        "signature": historical_cache_signature(),
+        "source_files": list(HISTORICAL_CACHE_SOURCE_FILES),
+    }
+
+
+def historical_cache_is_current(path):
+    """Return True only when an existing JSON matches current model/data code."""
+    path = Path(path)
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text())
+        stored = payload.get("meta", {}).get("historical_cache", {})
+        return stored.get("signature") == historical_cache_signature()
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+
+def remove_stale_historical_cache(path):
+    """Delete an obsolete historical JSON and report whether it was removed."""
+    path = Path(path)
+    if path.exists() and not historical_cache_is_current(path):
+        path.unlink()
+        print(f"  Removed stale historical cache: {path}", flush=True)
+        return True
+    return False
 
 def configure_series(series):
     global SERIES, SERIES_SUFFIX, HISTORICAL_DIR
@@ -182,9 +242,21 @@ def train_models(X, y, track_types, track_types_to_train=None):
         if mask.sum() == 0:
             raise ValueError(f"No training rows for track type {tt}")
 
+        # n_samples is far larger than n_features here (roughly 59k x 404).
+        # covariance_eigh preserves the 99% explained-variance rule while
+        # avoiding the very large sample-side matrices created by full SVD.
+        # It is available in scikit-learn 1.5+.
+        version_parts = []
+        for part in str(sklearn.__version__).split(".")[:2]:
+            digits = "".join(ch for ch in part if ch.isdigit())
+            version_parts.append(int(digits or 0))
+        sklearn_version = tuple((version_parts + [0, 0])[:2])
+        pca_solver = "covariance_eigh" if sklearn_version >= (1, 5) else "full"
+        print(f"    PCA solver: {pca_solver} (scikit-learn {sklearn.__version__})", flush=True)
+
         model = make_pipeline(
             StandardScaler(),
-            PCA(n_components=0.95, svd_solver="full"),
+            PCA(n_components=0.99, svd_solver=pca_solver),
             LogisticRegression(**MODEL_PARAMS)
         )
         model.fit(X[mask], y[mask])
@@ -309,31 +381,39 @@ def summarize_driver(car, driver_info, track_type, pmf, cdf, field_size):
     def overall_p50(window_index, metric):
         return feature_value(window_index * metric_block_size + metric_order.index(metric) * percentiles_per_metric + 2)
 
+    # Overall blocks are ordered last 5, last 10, last 20, last 36.
     baselines = {
-        "last10_median_finish": overall_p50(0, "finish"),
-        "last20_median_finish": overall_p50(1, "finish"),
-        "last36_median_finish": overall_p50(2, "finish"),
-        "last10_median_start": overall_p50(0, "start"),
-        "last20_median_start": overall_p50(1, "start"),
-        "last36_median_start": overall_p50(2, "start"),
-        "last10_median_avg_pos": overall_p50(0, "avg_pos"),
-        "last20_median_avg_pos": overall_p50(1, "avg_pos"),
-        "last36_median_avg_pos": overall_p50(2, "avg_pos"),
-        "last10_median_laps_completed": overall_p50(0, "pct_laps_completed"),
-        "last20_median_laps_completed": overall_p50(1, "pct_laps_completed"),
-        "last36_median_laps_completed": overall_p50(2, "pct_laps_completed"),
-        "last10_median_fastest_laps": overall_p50(0, "pct_fastest_laps"),
-        "last20_median_fastest_laps": overall_p50(1, "pct_fastest_laps"),
-        "last36_median_fastest_laps": overall_p50(2, "pct_fastest_laps"),
-        "last10_median_laps_top15": overall_p50(0, "pct_laps_top15"),
-        "last20_median_laps_top15": overall_p50(1, "pct_laps_top15"),
-        "last36_median_laps_top15": overall_p50(2, "pct_laps_top15"),
-        "last10_median_laps_led": overall_p50(0, "pct_laps_led"),
-        "last20_median_laps_led": overall_p50(1, "pct_laps_led"),
-        "last36_median_laps_led": overall_p50(2, "pct_laps_led"),
+        "last5_median_finish": overall_p50(0, "finish"),
+        "last10_median_finish": overall_p50(1, "finish"),
+        "last20_median_finish": overall_p50(2, "finish"),
+        "last36_median_finish": overall_p50(3, "finish"),
+        "last5_median_start": overall_p50(0, "start"),
+        "last10_median_start": overall_p50(1, "start"),
+        "last20_median_start": overall_p50(2, "start"),
+        "last36_median_start": overall_p50(3, "start"),
+        "last5_median_avg_pos": overall_p50(0, "avg_pos"),
+        "last10_median_avg_pos": overall_p50(1, "avg_pos"),
+        "last20_median_avg_pos": overall_p50(2, "avg_pos"),
+        "last36_median_avg_pos": overall_p50(3, "avg_pos"),
+        "last5_median_laps_completed": overall_p50(0, "pct_laps_completed"),
+        "last10_median_laps_completed": overall_p50(1, "pct_laps_completed"),
+        "last20_median_laps_completed": overall_p50(2, "pct_laps_completed"),
+        "last36_median_laps_completed": overall_p50(3, "pct_laps_completed"),
+        "last5_median_fastest_laps": overall_p50(0, "pct_fastest_laps"),
+        "last10_median_fastest_laps": overall_p50(1, "pct_fastest_laps"),
+        "last20_median_fastest_laps": overall_p50(2, "pct_fastest_laps"),
+        "last36_median_fastest_laps": overall_p50(3, "pct_fastest_laps"),
+        "last5_median_laps_top15": overall_p50(0, "pct_laps_top15"),
+        "last10_median_laps_top15": overall_p50(1, "pct_laps_top15"),
+        "last20_median_laps_top15": overall_p50(2, "pct_laps_top15"),
+        "last36_median_laps_top15": overall_p50(3, "pct_laps_top15"),
+        "last5_median_laps_led": overall_p50(0, "pct_laps_led"),
+        "last10_median_laps_led": overall_p50(1, "pct_laps_led"),
+        "last20_median_laps_led": overall_p50(2, "pct_laps_led"),
+        "last36_median_laps_led": overall_p50(3, "pct_laps_led"),
     }
 
-    raw_start = features[-1] if features else None
+    raw_start = features[204] if len(features) > 204 else None
 
     starting_position = None
     try:
@@ -495,13 +575,81 @@ def build_pca_summary(model, raw_features, cars, top_components=8, max_top_drive
     # outlier driver. Absolute values count both helpful and harmful movement.
     components.sort(key=lambda item: item["mean_abs_help"], reverse=True)
     return {
+        "observed_variables": int(raw_features.shape[1]),
         "retained_components": int(pca.n_components_),
         "retained_variance": float(np.sum(pca.explained_variance_ratio_)),
         "contribution_basis": "raw model EV before Sinkhorn; component neutralized to zero",
         "components": components[:min(top_components, len(components))],
     }
 
-def predict_field(models, testing, mode_meta):
+
+def build_similar_historical_profiles(model, target_features, training_X, training_y,
+                                      training_track_types, training_rows,
+                                      track_type):
+    """Return the single closest same-series observation from every season.
+
+    Distances are measured directly in PCA score space, so components with
+    greater explained variance contribute more to similarity. Candidates are
+    restricted to the active series and target track type, then reduced to the
+    nearest observation within each season. Results are displayed newest first
+    and can extend all the way back to 2005 when data are available.
+    """
+    scaler = model.named_steps["standardscaler"]
+    pca = model.named_steps["pca"]
+
+    valid_indices = []
+    for index, row in enumerate(training_rows):
+        metadata = dict(row[3] or {}) if len(row) > 3 else {}
+        if training_track_types[index] != track_type:
+            continue
+        if str(metadata.get("series", SERIES)).lower() != SERIES:
+            continue
+        try:
+            season = int(metadata.get("season"))
+        except (TypeError, ValueError):
+            continue
+        if season < 2005:
+            continue
+        valid_indices.append(index)
+
+    candidate_indices = np.asarray(valid_indices, dtype=int)
+    if candidate_indices.size == 0:
+        return [[] for _ in range(len(target_features))]
+
+    hist_scores = pca.transform(scaler.transform(training_X[candidate_indices]))
+    target_scores = pca.transform(scaler.transform(target_features))
+    out = []
+    for target in target_scores:
+        distances = np.sqrt(np.mean((hist_scores - target) ** 2, axis=1))
+        best_by_season = {}
+        for local_index, distance_value in enumerate(distances):
+            source_index = int(candidate_indices[local_index])
+            row = training_rows[source_index]
+            metadata = dict(row[3] or {}) if len(row) > 3 else {}
+            season = int(metadata["season"])
+            distance = float(distance_value)
+            current = best_by_season.get(season)
+            if current is None or distance < current[0]:
+                best_by_season[season] = (distance, source_index, metadata)
+
+        matches = []
+        for season in sorted(best_by_season, reverse=True):
+            distance, source_index, metadata = best_by_season[season]
+            matches.append({
+                "car": metadata.get("car", ""),
+                "driver": metadata.get("driver", ""),
+                "season": season,
+                "race_num": metadata.get("race_num"),
+                "track_name": metadata.get("track_name", ""),
+                "series": SERIES,
+                "similarity": 100.0 / (1.0 + distance),
+                "distance": distance,
+                "finish": int(training_y[source_index]),
+            })
+        out.append(matches)
+    return out
+
+def predict_field(models, testing, mode_meta, training_X=None, training_y=None, training_track_types=None, training_rows=None):
     """Run batched, field-balanced predictions for all target drivers."""
     mode = mode_meta.get("mode", "next_race")
     cars = sorted(_cars_in_testing(testing), key=car_sort_key)
@@ -525,6 +673,7 @@ def predict_field(models, testing, mode_meta):
             "tracks": TRACK_LABELS,
             "params": MODEL_PARAMS,
             "mode_meta": mode_meta,
+            "historical_cache": historical_cache_metadata(),
         },
         "tracks": {},
     }
@@ -544,12 +693,17 @@ def predict_field(models, testing, mode_meta):
         pmfs = predict_pmfs_batch(models[tt], features, field_size)
 
         output.setdefault("pca", {})[tt] = build_pca_summary(models[tt], features, cars)
+        similar_profiles = build_similar_historical_profiles(
+            models[tt], features, training_X, training_y,
+            training_track_types, training_rows, tt
+        ) if training_rows is not None else [[] for _ in cars]
         output["tracks"][tt] = {}
-        for car, pmf in zip(cars, pmfs):
+        for car, pmf, matches in zip(cars, pmfs, similar_profiles):
             cdf = np.cumsum(pmf)
             output["tracks"][tt][car] = summarize_driver(
                 car, testing[car], tt, pmf, cdf, field_size
             )
+            output["tracks"][tt][car]["similar_historical_profiles"] = matches
 
         win_total = sum(d["win"] for d in output["tracks"][tt].values())
         print(
@@ -590,10 +744,27 @@ def write_predictions(input_training, input_testing, output_path):
     required_tracks = get_required_track_types(meta)
 
     field_size = get_target_field_size(testing)
-    X, y, tt = load_training(input_training, field_size)
+    training_rows_path = Path(series_filename("training_rows", "json"))
+    training_rows = None
+    if training_rows_path.exists():
+        try:
+            raw_rows = json.loads(training_rows_path.read_text())
+            training_rows = [
+                (list(row[0]), row[1], row[2], dict(row[3] or {}))
+                for row in raw_rows
+                if isinstance(row, list) and len(row) >= 4
+            ]
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            print(f"  Could not load {training_rows_path}: {exc}; similarity profiles disabled.", flush=True)
+            training_rows = None
+
+    if training_rows:
+        X, y, tt = rows_to_arrays(training_rows, field_size)
+    else:
+        X, y, tt = load_training(input_training, field_size)
     models = train_models(X, y, tt, required_tracks)
 
-    preds = predict_field(models, testing, meta)
+    preds = predict_field(models, testing, meta, X, y, tt, training_rows)
 
     preds = _write_json(preds, output_path)
     print(f"Wrote {output_path}", flush=True)
@@ -640,7 +811,8 @@ def rows_to_arrays(rows, target_field_size=None):
     X = []
     y = []
     track_types = []
-    for feats, finish, track_type in rows:
+    for row in rows:
+        feats, finish, track_type = row[:3]
         X.append(feats)
         y.append(finish)
         track_types.append(track_type)
@@ -658,7 +830,7 @@ def write_predictions_from_rows(training_rows, testing, output_path):
     X, y, tt = rows_to_arrays(training_rows, field_size)
     models = train_models(X, y, tt, required_tracks)
 
-    preds = predict_field(models, testing, meta)
+    preds = predict_field(models, testing, meta, X, y, tt, training_rows)
     preds = _write_json(preds, output_path)
     print(f"Wrote {output_path}", flush=True)
     return preds
@@ -732,9 +904,10 @@ def run_historical_from_cache(year, race_num):
 
     for current_race, training_rows, testing in season_jobs:
         output = historical_output_path(year, current_race)
-        if output.exists():
+        remove_stale_historical_cache(output)
+        if historical_cache_is_current(output):
             skipped += 1
-            print(f"  Race {current_race:02d}: already cached; skipping.", flush=True)
+            print(f"  Race {current_race:02d}: current cache; skipping.", flush=True)
             continue
 
         print(
@@ -769,8 +942,9 @@ def build_latest_historical_prediction():
         raise ValueError("No completed races are available.")
     year, race_num = max(raw)
     output = historical_output_path(year, race_num)
-    if output.exists():
-        print(f"Latest completed race already cached: {output}", flush=True)
+    remove_stale_historical_cache(output)
+    if historical_cache_is_current(output):
+        print(f"Latest completed race cache is current: {output}", flush=True)
         return str(output.as_posix())
     training_rows, testing = build_datasets_for_race(raw, year, race_num)
     output.parent.mkdir(parents=True, exist_ok=True)
